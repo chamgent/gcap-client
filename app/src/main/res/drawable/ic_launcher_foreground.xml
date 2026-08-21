@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Outer Tech Glow Orbit -->
+    <path
+        android:strokeWidth="1.5"
+        android:pathData="M54,26 C69.46,26 82,38.54 82,54 C82,69.46 69.46,82 54,82 C38.54,82 26,69.46 26,54 C26,38.54 38.54,26 54,26 Z"
+        android:strokeAlpha="0.3">
+        <aapt:attr name="android:strokeColor">
+            <gradient
+                android:type="linear"
+                android:startX="26"
+                android:startY="26"
+                android:endX="82"
+                android:endY="82">
+                <item android:offset="0.0" android:color="#38BDF8" />
+                <item android:offset="1.0" android:color="#A855F7" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Main Gemini / AI Sparkle Star Core -->
+    <path
+        android:pathData="M54,30 C54,43.2 43.2,54 30,54 C43.2,54 54,64.8 54,78 C54,64.8 64.8,54 78,54 C64.8,54 54,43.2 54,30 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="30"
+                android:startY="30"
+                android:endX="78"
+                android:endY="78">
+                <item android:offset="0.0" android:color="#38BDF8" />
+                <item android:offset="0.5" android:color="#818CF8" />
+                <item android:offset="1.0" android:color="#C084FC" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Bright Center Highlight -->
+    <path
+        android:pathData="M54,42 C54,48.6 48.6,54 42,54 C48.6,54 54,59.4 54,66 C54,59.4 59.4,54 66,54 C59.4,54 54,48.6 54,42 Z"
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.9" />
+
+    <!-- Secondary Sparkle Top-Right -->
+    <path
+        android:pathData="M74,32 C74,36.5 69.5,41 65,41 C69.5,41 74,45.5 74,50 C74,45.5 78.5,41 83,41 C78.5,41 74,36.5 74,32 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="65"
+                android:startY="32"
+                android:endX="83"
+                android:endY="50">
+                <item android:offset="0.0" android:color="#FDE047" />
+                <item android:offset="1.0" android:color="#F43F5E" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Small Sparkle Bottom-Left -->
+    <path
+        android:pathData="M35,66 C35,69 32,72 29,72 C32,72 35,75 35,78 C35,75 38,72 41,72 C38,72 35,69 35,66 Z"
+        android:fillColor="#38BDF8"
+        android:fillAlpha="0.85" />
+</vector>

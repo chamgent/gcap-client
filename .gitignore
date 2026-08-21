@@ -1,0 +1,46 @@
+# Built application files
+*.apk
+*.aab
+*.aar
+
+# Files for the ART/Dalvik VM
+*.dex
+
+# Java class files
+*.class
+
+# Generated files
+bin/
+gen/
+out/
+build/
+app/build/
+.gradle/
+
+# Gradle files
+local.properties
+.gradle
+
+# Signing files
+*.jks
+*.keystore
+*.key
+*.p12
+
+# Android Studio / IntelliJ IDEA
+*.iml
+.idea/
+.DS_Store
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Log files
+*.log
+
+# Planning and agent metadata
+agents/
+IDEA.md
+requests.md
+task.md
+implementation_plan.md
