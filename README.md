@@ -1,7 +1,7 @@
 # GCAP Client (Google Cloud Agent Platform Client)
 
 <p align="center">
-  <img src="app/src/main/res/drawable/ic_launcher_foreground.xml" width="120" height="120" alt="GCAP Client Icon" />
+  <img src="docs/icon.svg" width="120" height="120" alt="GCAP Client Icon" />
 </p>
 
 <p align="center">
