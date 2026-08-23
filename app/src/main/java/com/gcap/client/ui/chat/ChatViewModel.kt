@@ -600,13 +600,23 @@ class ChatViewModel @Inject constructor(
             }
         }
 
+        val reasoningEffortVal = if (state.selectedModel.supportsReasoning) {
+            when (state.thinkingLevel) {
+                "MINIMAL", "LOW" -> "low"
+                "MEDIUM" -> "medium"
+                "HIGH" -> "high"
+                else -> "medium"
+            }
+        } else null
+
         return OpenAiChatRequest(
             model = rawModelId,
             messages = openAiMessages,
             stream = true,
             temperature = if (state.selectedModel.supportsTemperature) state.temperature else null,
             topP = if (state.selectedModel.supportsTopP) state.topP else null,
-            maxTokens = if (state.maxOutputTokens in 1..65535) state.maxOutputTokens else null
+            maxTokens = if (state.maxOutputTokens in 1..65535) state.maxOutputTokens else null,
+            reasoningEffort = reasoningEffortVal
         )
     }
 

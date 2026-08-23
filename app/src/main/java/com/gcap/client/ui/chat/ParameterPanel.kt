@@ -132,10 +132,27 @@ fun ParameterPanel(
                 }
             }
 
-            // Thinking Level (for Google models with Thinking)
-            if (uiState.selectedModel.requestFormat == ModelRequestFormat.FORMAT_ONE || uiState.selectedModel.requestFormat == ModelRequestFormat.FORMAT_TWO) {
+            // Thinking Level (for Google models with Thinking or OpenAI models with Reasoning)
+            if (uiState.selectedModel.supportsReasoning || uiState.selectedModel.requestFormat == ModelRequestFormat.FORMAT_ONE || uiState.selectedModel.requestFormat == ModelRequestFormat.FORMAT_TWO) {
                 Column {
-                    Text("思考级别 (Thinking Level)", style = MaterialTheme.typography.bodyMedium)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("思考强度 (thinkingLevel / reasoning_effort)", style = MaterialTheme.typography.bodyMedium)
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = MaterialTheme.colorScheme.secondaryContainer
+                        ) {
+                            Text(
+                                text = uiState.thinkingLevel,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
                     Spacer(modifier = Modifier.height(6.dp))
                     val levels = listOf("MINIMAL", "LOW", "MEDIUM", "HIGH")
                     SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {

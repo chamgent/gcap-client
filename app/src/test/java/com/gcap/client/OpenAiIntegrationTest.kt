@@ -151,7 +151,8 @@ class OpenAiIntegrationTest {
             ),
             stream = true,
             temperature = 0.7f,
-            topP = 0.95f
+            topP = 0.95f,
+            reasoningEffort = "high"
         )
 
         val jsonString = openAiJson.encodeToString(request)
@@ -159,5 +160,6 @@ class OpenAiIntegrationTest {
         assertTrue(jsonString.contains("\"model\":\"deepseek-reasoner\""))
         assertTrue(jsonString.contains("\"stream\":true"))
         assertTrue(jsonString.contains("\"temperature\":0.7"))
+        assertTrue(jsonString.contains("\"reasoning_effort\":\"high\""))
     }
 }

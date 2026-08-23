@@ -28,7 +28,9 @@ data class OpenAiChatRequest(
     @SerialName("top_p")
     val topP: Float? = null,
     @SerialName("max_tokens")
-    val maxTokens: Int? = null
+    val maxTokens: Int? = null,
+    @SerialName("reasoning_effort")
+    val reasoningEffort: String? = null
 )
 
 @Serializable
