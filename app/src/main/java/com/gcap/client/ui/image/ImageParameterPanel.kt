@@ -176,9 +176,8 @@ fun ImageParameterPanel(
                 Text("响应模态 (responseModalities)", style = MaterialTheme.typography.bodyMedium)
                 Spacer(modifier = Modifier.height(6.dp))
                 val modalityPresets = listOf(
-                    "图文混合" to listOf("TEXT", "IMAGE"),
-                    "纯图片" to listOf("IMAGE"),
-                    "纯文本" to listOf("TEXT")
+                    "图文混合 [TEXT, IMAGE]" to listOf("TEXT", "IMAGE"),
+                    "纯图片 [IMAGE]" to listOf("IMAGE")
                 )
                 SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
                     modalityPresets.forEachIndexed { index, (label, list) ->
@@ -230,11 +229,11 @@ fun ImageParameterPanel(
                 )
             }
 
-            // Thinking Level
+            // Thinking Level (Nano Banana 2 支持 MINIMAL 和 HIGH)
             Column {
                 Text("思考程度 (thinkingLevel)", style = MaterialTheme.typography.bodyMedium)
                 Spacer(modifier = Modifier.height(6.dp))
-                val levels = listOf("MINIMAL", "LOW", "MEDIUM", "HIGH")
+                val levels = listOf("MINIMAL", "HIGH")
                 SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
                     levels.forEachIndexed { index, level ->
                         SegmentedButton(

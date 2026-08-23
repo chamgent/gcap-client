@@ -74,4 +74,25 @@ class RequestSerializationTest {
         assertTrue(jsonString.contains("\"personGeneration\":\"ALLOW_ALL\""))
         assertTrue(jsonString.contains("\"googleSearch\":{}"))
     }
+
+    @Test
+    fun testPureImageModalitiesSerialization() {
+        val request = GenerateContentRequest(
+            contents = listOf(
+                Content(
+                    role = "user",
+                    parts = listOf(Part(text = "风景画"))
+                )
+            ),
+            generationConfig = GenerationConfig(
+                responseModalities = listOf("IMAGE"),
+                thinkingConfig = ThinkingConfig(thinkingLevel = "HIGH")
+            )
+        )
+
+        val jsonString = json.encodeToString(request)
+        println("Pure Image Request JSON: $jsonString")
+        assertTrue(jsonString.contains("\"responseModalities\":[\"IMAGE\"]"))
+        assertTrue(jsonString.contains("\"thinkingLevel\":\"HIGH\""))
+    }
 }
