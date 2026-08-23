@@ -254,12 +254,18 @@ fun ModelMessageView(
     onRegenerate: (() -> Unit)? = null
 ) {
     val clipboardManager = LocalClipboardManager.current
-    var showThinking by remember { mutableStateOf(false) }
+    var showThinking by remember(message.id) { mutableStateOf(message.isStreaming && message.thinkingContent.isNotBlank()) }
     var showToolCalls by remember { mutableStateOf(false) }
     var showEditDialog by remember { mutableStateOf(false) }
     var fullScreenImage by remember { mutableStateOf<MessageImage?>(null) }
     val context = LocalContext.current
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+
+    androidx.compose.runtime.LaunchedEffect(message.isStreaming, message.thinkingContent.isNotEmpty()) {
+        if (message.isStreaming && message.thinkingContent.isNotEmpty() && !showThinking) {
+            showThinking = true
+        }
+    }
 
     Column(
         modifier = modifier
@@ -463,12 +469,30 @@ fun ModelMessageView(
 
         // Error message
         if (message.error != null) {
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = message.error,
-                color = MaterialTheme.colorScheme.error,
-                style = MaterialTheme.typography.bodySmall
-            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.8f),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "错误",
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Text(
+                        text = message.error,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
         }
 
         // Action bar & Token Metrics (Like DeepSeek/ChatGPT footer)

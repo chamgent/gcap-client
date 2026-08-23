@@ -47,10 +47,10 @@ class OpenAiApiService @Inject constructor(
         private const val TAG = "OpenAiApiService"
 
         val VISION_REGEX = Regex(
-            "(?i)(vision|4o|4.5|claude|gemini|vl|omni|llava|qwen-vl|minicpm|pixtral|internvl|multimodal|grok-2-vision|image|qvq|glm-4v|sonnet|opus|haiku|step-2|yi-vision)"
+            "(?i)(vision|4o|4.5|5.6|5|claude|gemini|vl|omni|llava|qwen|minicpm|pixtral|internvl|multimodal|grok|image|qvq|glm|sonnet|opus|haiku|step|yi-vision|mimo|kimi|deepseek-.*vision)"
         )
         val REASONING_REGEX = Regex(
-            "(?i)(r1|o1|o3|o4|reason|reasoner|reasoning|thinking|think|qwq|claude-3-7|claude-3.7|sonnet-3-7|sonnet-3.7|gemini-2.5|gemini-2.0-flash-thinking|k1.5|kimi-k1.5|marco-o1|qvq|deepseek-r1|deepseek-reasoner)"
+            "(?i)(r1|o1|o3|o4|reason|reasoner|reasoning|thinking|think|qwq|claude-3-7|claude-3.7|sonnet-3-7|sonnet-3.7|gemini-2.5|gemini-2.0-flash-thinking|k1.5|kimi-k|glm-5|deepseek-v4|deepseek-r|qwen3|minimax-m|mimo|hy3|gpt-5|grok|marco-o1|qvq)"
         )
 
         fun normalizeBaseUrl(rawUrl: String): String {
