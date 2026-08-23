@@ -32,6 +32,11 @@ object AppModule {
     }
 
     @Provides
+    fun provideCustomProviderDao(database: AppDatabase): com.gcap.client.data.local.CustomProviderDao {
+        return database.customProviderDao()
+    }
+
+    @Provides
     @Singleton
     fun provideSettingsDataStore(@ApplicationContext context: Context): SettingsDataStore {
         return SettingsDataStore(context)

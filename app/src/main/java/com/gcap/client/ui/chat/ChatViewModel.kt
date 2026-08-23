@@ -15,12 +15,16 @@ import com.gcap.client.data.model.GoogleSearchTool
 import com.gcap.client.data.model.InlineData
 import com.gcap.client.data.model.MessageImage
 import com.gcap.client.data.model.MessageRole
+import com.gcap.client.data.model.ModelCategory
 import com.gcap.client.data.model.ModelDefinition
 import com.gcap.client.data.model.ModelRegistry
 import com.gcap.client.data.model.ModelRequestFormat
+import com.gcap.client.data.model.OpenAiChatRequest
+import com.gcap.client.data.model.OpenAiMessage
 import com.gcap.client.data.model.Part
 import com.gcap.client.data.model.RetrievalConfig
 import com.gcap.client.data.model.SafetySetting
+import com.gcap.client.data.model.StreamResponse
 import com.gcap.client.data.model.SystemInstruction
 import com.gcap.client.data.model.SystemPart
 import com.gcap.client.data.model.ThinkingConfig
@@ -31,16 +35,22 @@ import com.gcap.client.ui.components.SafetySettingsState
 import com.gcap.client.ui.components.formatToolCalls
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import java.util.UUID
 import javax.inject.Inject
 
@@ -74,6 +84,36 @@ class ChatViewModel @Inject constructor(
 
     val conversations: StateFlow<List<ConversationEntity>> = repository.getConversationsByCategory("CHAT")
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val availableModels: StateFlow<List<ModelDefinition>> = combine(
+        repository.getAllProviders(),
+        repository.getAllCustomModels()
+    ) { providers, customModels ->
+        val providerMap = providers.associateBy { it.id }
+        val customModelDefs = customModels.mapNotNull { cm ->
+            val provider = providerMap[cm.providerId] ?: return@mapNotNull null
+            ModelDefinition(
+                id = cm.id,
+                displayName = cm.displayName,
+                category = ModelCategory.CHAT,
+                requestFormat = ModelRequestFormat.FORMAT_OPENAI,
+                providerName = provider.name,
+                providerId = provider.id,
+                isCustom = true,
+                supportsVision = cm.supportsVision,
+                supportsReasoning = cm.supportsReasoning,
+                supportsTemperature = true,
+                supportsTopP = true,
+                supportsSystemInstruction = true,
+                supportsImageInput = cm.supportsVision,
+                supportsGoogleSearch = false,
+                supportsGoogleMaps = false,
+                defaultMaxOutputTokens = 65535,
+                defaultThinkingLevel = "NONE"
+            )
+        }
+        ModelRegistry.chatModels + customModelDefs
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), ModelRegistry.chatModels)
 
     private var generationJob: Job? = null
 
@@ -150,23 +190,58 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    fun sendMessage(text: String, images: List<MessageImage>) {
-        if (text.isBlank() && images.isEmpty()) return
+    fun updateSystemInstruction(instruction: String) {
+        _uiState.update { it.copy(systemInstruction = instruction) }
+    }
 
+    fun updateMaxOutputTokens(tokens: Int) {
+        _uiState.update { it.copy(maxOutputTokens = tokens) }
+    }
+
+    fun updateTemperature(temp: Float) {
+        _uiState.update { it.copy(temperature = temp) }
+    }
+
+    fun updateTopP(p: Float) {
+        _uiState.update { it.copy(topP = p) }
+    }
+
+    fun updateThinkingLevel(level: String) {
+        _uiState.update { it.copy(thinkingLevel = level) }
+    }
+
+    fun updateSafetySettings(settings: SafetySettingsState) {
+        _uiState.update { it.copy(safetySettings = settings) }
+    }
+
+    fun updateGoogleSearch(enabled: Boolean) {
+        _uiState.update { it.copy(googleSearchEnabled = enabled) }
+    }
+
+    fun updateGoogleMaps(enabled: Boolean) {
+        _uiState.update { it.copy(googleMapsEnabled = enabled) }
+    }
+
+    fun updateToolConfigLanguage(code: String) {
+        _uiState.update { it.copy(toolConfigLanguageCode = code) }
+    }
+
+    fun stopGeneration() {
+        generationJob?.cancel()
+        _uiState.update { state ->
+            val messages = state.messages.map { msg ->
+                if (msg.isStreaming) msg.copy(isStreaming = false) else msg
+            }
+            state.copy(messages = messages, isGenerating = false)
+        }
+    }
+
+    fun sendMessage(text: String, images: List<MessageImage> = emptyList()) {
+        if (text.isBlank() && images.isEmpty()) return
         val currentState = _uiState.value
+        if (currentState.isGenerating) return
 
         generationJob = viewModelScope.launch {
-            val apiKey = try {
-                settingsDataStore.getApiKey().first()
-            } catch (e: Exception) {
-                ""
-            }
-
-            if (apiKey.isBlank()) {
-                _uiState.update { it.copy(error = "请先在设置中输入 API Key") }
-                return@launch
-            }
-
             val userMessage = ChatMessage(
                 id = UUID.randomUUID().toString(),
                 role = MessageRole.USER,
@@ -222,124 +297,7 @@ class ChatViewModel @Inject constructor(
             )
 
             try {
-                val request = buildRequest(currentState, currentState.messages + userMessage)
-                var accumulatedText = ""
-                var accumulatedThought = ""
-                var accumulatedToolCall = ""
-                var promptTokens: Int? = null
-                var candidatesTokens: Int? = null
-                val searchQueries = mutableListOf<String>()
-                val groundingSources = mutableListOf<Pair<String, String>>()
-                val functionCalls = mutableListOf<String>()
-                val accumulatedImages = mutableListOf<MessageImage>()
-
-                repository.streamGenerateContent(apiKey, currentState.selectedModel.id, request)
-                    .collect { response ->
-                        response.usageMetadata?.let { usage ->
-                            if (usage.promptTokenCount != null) promptTokens = usage.promptTokenCount
-                            if (usage.candidatesTokenCount != null) candidatesTokens = usage.candidatesTokenCount
-                        }
-                        val candidate = response.candidates?.firstOrNull()
-                        candidate?.groundingMetadata?.let { gm ->
-                            gm.webSearchQueries?.forEach { q -> if (q !in searchQueries) searchQueries.add(q) }
-                            gm.groundingChunks?.forEach { chunk ->
-                                chunk.web?.let { web ->
-                                    if (!web.uri.isNullOrBlank()) {
-                                        val title = web.title?.ifBlank { web.uri } ?: web.uri
-                                        if (groundingSources.none { it.second == web.uri }) {
-                                            groundingSources.add(title to web.uri)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        candidate?.content?.parts?.forEach { part ->
-                            part.functionCall?.let { fc ->
-                                val fcName = fc.name ?: "tool"
-                                val desc = if (fc.args != null) "$fcName(${fc.args})" else "$fcName()"
-                                if (desc !in functionCalls) functionCalls.add(desc)
-                            }
-                            if (part.thought == true) {
-                                part.text?.let { chunk ->
-                                    accumulatedThought += chunk
-                                }
-                            } else {
-                                part.text?.let { chunk ->
-                                    accumulatedText += chunk
-                                }
-                            }
-                            part.inlineData?.let { inline ->
-                                if (inline.data.isNotBlank()) {
-                                    val fileUri = imageStorageManager.saveBase64Image(inline.data, inline.mimeType)
-                                    accumulatedImages.add(
-                                        MessageImage(
-                                            base64Data = inline.data,
-                                            mimeType = inline.mimeType.ifBlank { "image/png" },
-                                            uri = fileUri
-                                        )
-                                    )
-                                }
-                            }
-                        }
-
-                        accumulatedToolCall = formatToolCalls(functionCalls, searchQueries, groundingSources)
-
-                        _uiState.update { state ->
-                            val currentList = state.messages.map { msg ->
-                                if (msg.id == modelMessageId) {
-                                    msg.copy(
-                                        textContent = accumulatedText,
-                                        thinkingContent = accumulatedThought,
-                                        toolCallContent = accumulatedToolCall,
-                                        promptTokens = promptTokens,
-                                        candidatesTokens = candidatesTokens,
-                                        images = accumulatedImages.toList()
-                                    )
-                                } else msg
-                            }
-                            state.copy(messages = currentList)
-                        }
-                    }
-
-                // Streaming done
-                _uiState.update { state ->
-                    val finalMessages = state.messages.map { msg ->
-                        if (msg.id == modelMessageId) {
-                            msg.copy(isStreaming = false)
-                        } else msg
-                    }
-                    state.copy(messages = finalMessages, isGenerating = false)
-                }
-
-                // Persist model message with local URIs to prevent CursorWindow overflow
-                val imagesForDb = accumulatedImages.map { img ->
-                    val localUri = img.uri ?: (img.base64Data?.let { imageStorageManager.saveBase64Image(it, img.mimeType) })
-                    MessageImage(
-                        uri = localUri,
-                        mimeType = img.mimeType
-                    )
-                }
-
-                repository.insertMessage(
-                    MessageEntity(
-                        id = modelMessageId,
-                        conversationId = currentState.conversationId,
-                        role = "MODEL",
-                        textContent = accumulatedText,
-                        imagesJson = if (imagesForDb.isNotEmpty()) json.encodeToString(imagesForDb) else "",
-                        thinkingContent = accumulatedThought,
-                        toolCallContent = accumulatedToolCall,
-                        timestamp = System.currentTimeMillis(),
-                        orderIndex = currentState.messages.size + 1
-                    )
-                )
-
-                repository.updateConversationTitle(
-                    conversationId = currentState.conversationId,
-                    title = (currentState.messages.firstOrNull()?.textContent ?: text).take(30).ifEmpty { "新对话" },
-                    updatedAt = System.currentTimeMillis()
-                )
+                executeStreaming(currentState, modelMessageId, currentState.messages + userMessage)
             } catch (e: Exception) {
                 _uiState.update { state ->
                     val errorMessages = state.messages.map { msg ->
@@ -379,6 +337,7 @@ class ChatViewModel @Inject constructor(
             role = MessageRole.MODEL,
             textContent = "",
             thinkingContent = "",
+            modelName = currentState.selectedModel.displayName,
             timestamp = System.currentTimeMillis(),
             isStreaming = true
         )
@@ -398,129 +357,8 @@ class ChatViewModel @Inject constructor(
         }
 
         generationJob = viewModelScope.launch {
-            val apiKey = try {
-                settingsDataStore.getApiKey().first()
-            } catch (e: Exception) {
-                ""
-            }
-
-            if (apiKey.isBlank()) {
-                _uiState.update { it.copy(error = "请先在设置中输入 API Key") }
-                return@launch
-            }
-
             try {
-                val request = buildRequest(currentState, truncatedHistory)
-                var accumulatedText = ""
-                var accumulatedThought = ""
-                var accumulatedToolCall = ""
-                var promptTokens: Int? = null
-                var candidatesTokens: Int? = null
-                val searchQueries = mutableListOf<String>()
-                val groundingSources = mutableListOf<Pair<String, String>>()
-                val functionCalls = mutableListOf<String>()
-                val accumulatedImages = mutableListOf<MessageImage>()
-
-                repository.streamGenerateContent(apiKey, currentState.selectedModel.id, request)
-                    .collect { response ->
-                        response.usageMetadata?.let { usage ->
-                            if (usage.promptTokenCount != null) promptTokens = usage.promptTokenCount
-                            if (usage.candidatesTokenCount != null) candidatesTokens = usage.candidatesTokenCount
-                        }
-                        val candidate = response.candidates?.firstOrNull()
-                        candidate?.groundingMetadata?.let { gm ->
-                            gm.webSearchQueries?.forEach { q -> if (q !in searchQueries) searchQueries.add(q) }
-                            gm.groundingChunks?.forEach { chunk ->
-                                chunk.web?.let { web ->
-                                    if (!web.uri.isNullOrBlank()) {
-                                        val title = web.title?.ifBlank { web.uri } ?: web.uri
-                                        if (groundingSources.none { it.second == web.uri }) {
-                                            groundingSources.add(title to web.uri)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        candidate?.content?.parts?.forEach { part ->
-                            part.functionCall?.let { fc ->
-                                val fcName = fc.name ?: "tool"
-                                val desc = if (fc.args != null) "$fcName(${fc.args})" else "$fcName()"
-                                if (desc !in functionCalls) functionCalls.add(desc)
-                            }
-                            if (part.thought == true) {
-                                part.text?.let { chunk ->
-                                    accumulatedThought += chunk
-                                }
-                            } else {
-                                part.text?.let { chunk ->
-                                    accumulatedText += chunk
-                                }
-                            }
-                            part.inlineData?.let { inline ->
-                                if (inline.data.isNotBlank()) {
-                                    val fileUri = imageStorageManager.saveBase64Image(inline.data, inline.mimeType)
-                                    accumulatedImages.add(
-                                        MessageImage(
-                                            base64Data = inline.data,
-                                            mimeType = inline.mimeType.ifBlank { "image/png" },
-                                            uri = fileUri
-                                        )
-                                    )
-                                }
-                            }
-                        }
-
-                        accumulatedToolCall = formatToolCalls(functionCalls, searchQueries, groundingSources)
-
-                        _uiState.update { state ->
-                            val currentList = state.messages.map { msg ->
-                                if (msg.id == modelMessageId) {
-                                    msg.copy(
-                                        textContent = accumulatedText,
-                                        thinkingContent = accumulatedThought,
-                                        toolCallContent = accumulatedToolCall,
-                                        promptTokens = promptTokens,
-                                        candidatesTokens = candidatesTokens,
-                                        images = accumulatedImages.toList()
-                                    )
-                                } else msg
-                            }
-                            state.copy(messages = currentList)
-                        }
-                    }
-
-                // Streaming done
-                _uiState.update { state ->
-                    val finalMessages = state.messages.map { msg ->
-                        if (msg.id == modelMessageId) {
-                            msg.copy(isStreaming = false)
-                        } else msg
-                    }
-                    state.copy(messages = finalMessages, isGenerating = false)
-                }
-
-                val imagesForDb = accumulatedImages.map { img ->
-                    val localUri = img.uri ?: (img.base64Data?.let { imageStorageManager.saveBase64Image(it, img.mimeType) })
-                    MessageImage(
-                        uri = localUri,
-                        mimeType = img.mimeType
-                    )
-                }
-
-                repository.insertMessage(
-                    MessageEntity(
-                        id = modelMessageId,
-                        conversationId = currentState.conversationId,
-                        role = "MODEL",
-                        textContent = accumulatedText,
-                        imagesJson = if (imagesForDb.isNotEmpty()) json.encodeToString(imagesForDb) else "",
-                        thinkingContent = accumulatedThought,
-                        toolCallContent = accumulatedToolCall,
-                        timestamp = System.currentTimeMillis(),
-                        orderIndex = userMsgIndex + 1
-                    )
-                )
+                executeStreaming(currentState, modelMessageId, truncatedHistory)
             } catch (e: Exception) {
                 _uiState.update { state ->
                     val errorMessages = state.messages.map { msg ->
@@ -534,30 +372,294 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    private fun buildRequest(state: ChatUiState, messages: List<ChatMessage>): GenerateContentRequest {
-        val contents = messages.mapNotNull { msg ->
-            if (msg.error != null && msg.textContent.isBlank() && msg.images.isEmpty()) {
-                return@mapNotNull null
+    private suspend fun executeStreaming(
+        currentState: ChatUiState,
+        modelMessageId: String,
+        historyMessages: List<ChatMessage>
+    ) {
+        var accumulatedText = ""
+        var accumulatedThought = ""
+        var accumulatedToolCall = ""
+        var promptTokens: Int? = null
+        var candidatesTokens: Int? = null
+        val searchQueries = mutableListOf<String>()
+        val groundingSources = mutableListOf<Pair<String, String>>()
+        val functionCalls = mutableListOf<String>()
+        val accumulatedImages = mutableListOf<MessageImage>()
+
+        val streamFlow: Flow<StreamResponse> = if (currentState.selectedModel.requestFormat == ModelRequestFormat.FORMAT_OPENAI) {
+            val providerId = currentState.selectedModel.providerId
+            val provider = if (providerId != null) repository.getProviderById(providerId) else null
+            if (provider == null) {
+                _uiState.update { state ->
+                    val errorMessages = state.messages.map { msg ->
+                        if (msg.id == modelMessageId) msg.copy(isStreaming = false, error = "未找到服务商配置") else msg
+                    }
+                    state.copy(messages = errorMessages, isGenerating = false, error = "未找到服务商配置")
+                }
+                return
             }
-            val parts = mutableListOf<Part>()
-            msg.images.forEach { img ->
-                val base64 = img.base64Data ?: (img.uri?.let { imageStorageManager.getBase64FromUri(it) })
-                base64?.let { data ->
-                    val cleanBase64 = data.substringAfter("base64,").trim()
-                    if (cleanBase64.isNotEmpty()) {
-                        parts.add(Part(inlineData = InlineData(mimeType = img.mimeType, data = cleanBase64)))
+            if (provider.apiKey.isBlank()) {
+                _uiState.update { state ->
+                    val errorMessages = state.messages.map { msg ->
+                        if (msg.id == modelMessageId) msg.copy(isStreaming = false, error = "该服务商未配置 API Key") else msg
+                    }
+                    state.copy(messages = errorMessages, isGenerating = false, error = "该服务商未配置 API Key")
+                }
+                return
+            }
+            val rawModelId = if (currentState.selectedModel.id.startsWith("${provider.id}_")) {
+                currentState.selectedModel.id.removePrefix("${provider.id}_")
+            } else {
+                currentState.selectedModel.id
+            }
+            val openAiRequest = buildOpenAiRequest(currentState, historyMessages, rawModelId)
+            repository.streamOpenAiChat(provider.baseUrl, provider.apiKey, openAiRequest)
+        } else {
+            val apiKey = try {
+                settingsDataStore.getApiKey().first()
+            } catch (e: Exception) {
+                ""
+            }
+            if (apiKey.isBlank()) {
+                _uiState.update { state ->
+                    val errorMessages = state.messages.map { msg ->
+                        if (msg.id == modelMessageId) msg.copy(isStreaming = false, error = "请先在设置中输入 Google API Key") else msg
+                    }
+                    state.copy(messages = errorMessages, isGenerating = false, error = "请先在设置中输入 Google API Key")
+                }
+                return
+            }
+            val request = buildRequest(currentState, historyMessages)
+            repository.streamGenerateContent(apiKey, currentState.selectedModel.id, request)
+        }
+
+        streamFlow.collect { response ->
+            response.usageMetadata?.let { usage ->
+                if (usage.promptTokenCount != null) promptTokens = usage.promptTokenCount
+                if (usage.candidatesTokenCount != null) candidatesTokens = usage.candidatesTokenCount
+            }
+            val candidate = response.candidates?.firstOrNull()
+            candidate?.groundingMetadata?.let { gm ->
+                gm.webSearchQueries?.forEach { q -> if (q !in searchQueries) searchQueries.add(q) }
+                gm.groundingChunks?.forEach { chunk ->
+                    chunk.web?.let { web ->
+                        if (!web.uri.isNullOrBlank()) {
+                            val title = web.title?.ifBlank { web.uri } ?: web.uri
+                            if (groundingSources.none { it.second == web.uri }) {
+                                groundingSources.add(title to web.uri)
+                            }
+                        }
                     }
                 }
             }
+
+            candidate?.content?.parts?.forEach { part ->
+                part.functionCall?.let { fc ->
+                    val fcName = fc.name ?: "tool"
+                    val desc = if (fc.args != null) "$fcName(${fc.args})" else "$fcName()"
+                    if (desc !in functionCalls) functionCalls.add(desc)
+                }
+                if (part.thought == true) {
+                    part.text?.let { chunk ->
+                        accumulatedThought += chunk
+                    }
+                } else {
+                    part.text?.let { chunk ->
+                        accumulatedText += chunk
+                    }
+                }
+                part.inlineData?.let { inline ->
+                    if (inline.data.isNotBlank()) {
+                        val fileUri = imageStorageManager.saveBase64Image(inline.data, inline.mimeType)
+                        accumulatedImages.add(
+                            MessageImage(
+                                base64Data = inline.data,
+                                mimeType = inline.mimeType.ifBlank { "image/png" },
+                                uri = fileUri
+                            )
+                        )
+                    }
+                }
+            }
+
+            accumulatedToolCall = formatToolCalls(functionCalls, searchQueries, groundingSources)
+
+            _uiState.update { state ->
+                val currentList = state.messages.map { msg ->
+                    if (msg.id == modelMessageId) {
+                        msg.copy(
+                            textContent = accumulatedText,
+                            thinkingContent = accumulatedThought,
+                            toolCallContent = accumulatedToolCall,
+                            promptTokens = promptTokens,
+                            candidatesTokens = candidatesTokens,
+                            images = accumulatedImages.toList()
+                        )
+                    } else msg
+                }
+                state.copy(messages = currentList)
+            }
+        }
+
+        // Streaming done
+        _uiState.update { state ->
+            val finalMessages = state.messages.map { msg ->
+                if (msg.id == modelMessageId) {
+                    msg.copy(isStreaming = false)
+                } else msg
+            }
+            state.copy(messages = finalMessages, isGenerating = false)
+        }
+
+        val imagesForDb = accumulatedImages.map { img ->
+            val localUri = img.uri ?: (img.base64Data?.let { imageStorageManager.saveBase64Image(it, img.mimeType) })
+            MessageImage(
+                uri = localUri,
+                mimeType = img.mimeType
+            )
+        }
+
+        repository.insertMessage(
+            MessageEntity(
+                id = modelMessageId,
+                conversationId = currentState.conversationId,
+                role = "MODEL",
+                textContent = accumulatedText,
+                imagesJson = if (imagesForDb.isNotEmpty()) json.encodeToString(imagesForDb) else "",
+                thinkingContent = accumulatedThought,
+                toolCallContent = accumulatedToolCall,
+                timestamp = System.currentTimeMillis(),
+                orderIndex = currentState.messages.size + 1
+            )
+        )
+
+        repository.updateConversationTitle(
+            conversationId = currentState.conversationId,
+            title = (currentState.messages.firstOrNull()?.textContent ?: historyMessages.firstOrNull()?.textContent ?: "新对话").take(30).ifEmpty { "新对话" },
+            updatedAt = System.currentTimeMillis()
+        )
+    }
+
+    private fun buildOpenAiRequest(
+        state: ChatUiState,
+        messages: List<ChatMessage>,
+        rawModelId: String
+    ): OpenAiChatRequest {
+        val openAiMessages = mutableListOf<OpenAiMessage>()
+
+        if (state.systemInstruction.isNotBlank()) {
+            openAiMessages.add(
+                OpenAiMessage(
+                    role = "system",
+                    content = JsonPrimitive(state.systemInstruction)
+                )
+            )
+        }
+
+        messages.forEach { msg ->
+            val role = if (msg.role == MessageRole.USER) "user" else "assistant"
+            if (msg.role == MessageRole.USER && msg.images.isNotEmpty() && state.selectedModel.supportsVision) {
+                val parts = mutableListOf<kotlinx.serialization.json.JsonObject>()
+                if (msg.textContent.isNotBlank()) {
+                    parts.add(
+                        buildJsonObject {
+                            put("type", JsonPrimitive("text"))
+                            put("text", JsonPrimitive(msg.textContent))
+                        }
+                    )
+                }
+                msg.images.forEach { img ->
+                    val base64 = img.base64Data ?: img.uri?.let { imageStorageManager.getBase64FromUri(it) }
+                    if (!base64.isNullOrBlank()) {
+                        val cleanBase64 = base64.substringAfter("base64,").trim()
+                        val dataUrl = "data:${img.mimeType};base64,$cleanBase64"
+                        parts.add(
+                            buildJsonObject {
+                                put("type", JsonPrimitive("image_url"))
+                                put("image_url", buildJsonObject {
+                                    put("url", JsonPrimitive(dataUrl))
+                                })
+                            }
+                        )
+                    }
+                }
+                openAiMessages.add(
+                    OpenAiMessage(
+                        role = role,
+                        content = JsonArray(parts)
+                    )
+                )
+            } else {
+                openAiMessages.add(
+                    OpenAiMessage(
+                        role = role,
+                        content = JsonPrimitive(msg.textContent)
+                    )
+                )
+            }
+        }
+
+        return OpenAiChatRequest(
+            model = rawModelId,
+            messages = openAiMessages,
+            stream = true,
+            temperature = if (state.selectedModel.supportsTemperature) state.temperature else null,
+            topP = if (state.selectedModel.supportsTopP) state.topP else null,
+            maxTokens = if (state.maxOutputTokens in 1..65535) state.maxOutputTokens else null
+        )
+    }
+
+    private fun buildRequest(state: ChatUiState, messages: List<ChatMessage>): GenerateContentRequest {
+        val contents = messages.map { msg ->
+            val parts = mutableListOf<Part>()
             if (msg.textContent.isNotBlank()) {
                 parts.add(Part(text = msg.textContent))
             }
-            if (parts.isEmpty()) {
-                null
-            } else {
-                Content(
-                    role = if (msg.role == MessageRole.USER) "user" else "model",
-                    parts = parts
+            msg.images.forEach { img ->
+                val base64 = img.base64Data ?: img.uri?.let { imageStorageManager.getBase64FromUri(it) }
+                if (!base64.isNullOrBlank()) {
+                    val cleanBase64 = base64.substringAfter("base64,").trim()
+                    parts.add(
+                        Part(
+                            inlineData = InlineData(
+                                mimeType = img.mimeType,
+                                data = cleanBase64
+                            )
+                        )
+                    )
+                }
+            }
+            Content(
+                role = if (msg.role == MessageRole.USER) "user" else "model",
+                parts = parts
+            )
+        }
+
+        val systemInstruction = if (state.selectedModel.supportsSystemInstruction && state.systemInstruction.isNotBlank()) {
+            SystemInstruction(parts = listOf(SystemPart(text = state.systemInstruction)))
+        } else null
+
+        val generationConfig = when (state.selectedModel.requestFormat) {
+            ModelRequestFormat.FORMAT_ONE -> {
+                GenerationConfig(
+                    maxOutputTokens = state.maxOutputTokens,
+                    thinkingConfig = ThinkingConfig(thinkingLevel = state.thinkingLevel)
+                )
+            }
+            ModelRequestFormat.FORMAT_TWO -> {
+                GenerationConfig(
+                    temperature = state.temperature,
+                    topP = state.topP,
+                    maxOutputTokens = state.maxOutputTokens,
+                    thinkingConfig = ThinkingConfig(thinkingLevel = state.thinkingLevel)
+                )
+            }
+            ModelRequestFormat.FORMAT_IMAGE, ModelRequestFormat.FORMAT_OPENAI -> {
+                GenerationConfig(
+                    temperature = state.temperature,
+                    topP = state.topP,
+                    maxOutputTokens = state.maxOutputTokens
                 )
             }
         }
@@ -570,92 +672,24 @@ class ChatViewModel @Inject constructor(
         )
 
         val tools = mutableListOf<Tool>()
-        if (state.googleSearchEnabled) {
+        if (state.selectedModel.supportsGoogleSearch && state.googleSearchEnabled) {
             tools.add(Tool(googleSearch = GoogleSearchTool()))
         }
-        if (state.googleMapsEnabled && state.selectedModel.supportsGoogleMaps) {
+        if (state.selectedModel.supportsGoogleMaps && state.googleMapsEnabled) {
             tools.add(Tool(googleMaps = GoogleMapsTool()))
         }
 
-        val toolConfig = if (state.toolConfigLanguageCode.isNotBlank()) {
+        val toolConfig = if (tools.isNotEmpty() && state.toolConfigLanguageCode.isNotBlank()) {
             ToolConfig(retrievalConfig = RetrievalConfig(languageCode = state.toolConfigLanguageCode))
         } else null
 
-        val thinkingConfig = if (state.thinkingLevel != "NONE") {
-            ThinkingConfig(thinkingLevel = state.thinkingLevel)
-        } else null
-
-        return when (state.selectedModel.requestFormat) {
-            ModelRequestFormat.FORMAT_ONE -> {
-                val systemInstruction = if (state.systemInstruction.isNotBlank()) {
-                    SystemInstruction(parts = listOf(SystemPart(text = state.systemInstruction)))
-                } else null
-
-                GenerateContentRequest(
-                    contents = contents,
-                    systemInstruction = systemInstruction,
-                    generationConfig = GenerationConfig(
-                        maxOutputTokens = state.maxOutputTokens,
-                        thinkingConfig = thinkingConfig
-                    ),
-                    safetySettings = safetySettings,
-                    tools = if (tools.isNotEmpty()) tools else null,
-                    toolConfig = toolConfig
-                )
-            }
-            ModelRequestFormat.FORMAT_TWO -> {
-                val systemInstruction = if (state.systemInstruction.isNotBlank()) {
-                    SystemInstruction(parts = listOf(SystemPart(text = state.systemInstruction)))
-                } else null
-
-                GenerateContentRequest(
-                    contents = contents,
-                    systemInstruction = systemInstruction,
-                    generationConfig = GenerationConfig(
-                        temperature = state.temperature,
-                        maxOutputTokens = state.maxOutputTokens,
-                        topP = state.topP,
-                        thinkingConfig = thinkingConfig
-                    ),
-                    safetySettings = safetySettings,
-                    tools = if (tools.isNotEmpty()) tools else null,
-                    toolConfig = toolConfig
-                )
-            }
-            ModelRequestFormat.FORMAT_IMAGE -> {
-                GenerateContentRequest(
-                    contents = contents,
-                    generationConfig = GenerationConfig(
-                        temperature = state.temperature,
-                        maxOutputTokens = state.maxOutputTokens,
-                        responseModalities = listOf("TEXT", "IMAGE"),
-                        topP = state.topP,
-                        thinkingConfig = thinkingConfig
-                    ),
-                    safetySettings = safetySettings,
-                    tools = if (tools.isNotEmpty()) tools else null
-                )
-            }
-        }
+        return GenerateContentRequest(
+            contents = contents,
+            systemInstruction = systemInstruction,
+            generationConfig = generationConfig,
+            safetySettings = safetySettings.ifEmpty { null },
+            tools = tools.ifEmpty { null },
+            toolConfig = toolConfig
+        )
     }
-
-    fun stopGeneration() {
-        generationJob?.cancel()
-        _uiState.update { state ->
-            val updatedMessages = state.messages.map { msg ->
-                if (msg.isStreaming) msg.copy(isStreaming = false) else msg
-            }
-            state.copy(isGenerating = false, messages = updatedMessages)
-        }
-    }
-
-    fun updateSystemInstruction(text: String) { _uiState.update { it.copy(systemInstruction = text) } }
-    fun updateMaxOutputTokens(value: Int) { _uiState.update { it.copy(maxOutputTokens = value) } }
-    fun updateTemperature(value: Float) { _uiState.update { it.copy(temperature = value) } }
-    fun updateTopP(value: Float) { _uiState.update { it.copy(topP = value) } }
-    fun updateThinkingLevel(level: String) { _uiState.update { it.copy(thinkingLevel = level) } }
-    fun updateSafetySettings(settings: SafetySettingsState) { _uiState.update { it.copy(safetySettings = settings) } }
-    fun updateGoogleSearchEnabled(enabled: Boolean) { _uiState.update { it.copy(googleSearchEnabled = enabled) } }
-    fun updateGoogleMapsEnabled(enabled: Boolean) { _uiState.update { it.copy(googleMapsEnabled = enabled) } }
-    fun updateToolConfigLanguageCode(code: String) { _uiState.update { it.copy(toolConfigLanguageCode = code) } }
 }

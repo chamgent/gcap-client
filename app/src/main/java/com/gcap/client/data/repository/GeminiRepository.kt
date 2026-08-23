@@ -2,25 +2,16 @@ package com.gcap.client.data.repository
 
 import com.gcap.client.data.local.ConversationDao
 import com.gcap.client.data.local.ConversationEntity
+import com.gcap.client.data.local.CustomModelEntity
+import com.gcap.client.data.local.CustomProviderDao
+import com.gcap.client.data.local.CustomProviderEntity
 import com.gcap.client.data.local.MessageEntity
 import com.gcap.client.data.local.SettingsDataStore
-import com.gcap.client.data.model.Content
 import com.gcap.client.data.model.GenerateContentRequest
-import com.gcap.client.data.model.GenerationConfig
-import com.gcap.client.data.model.GoogleMapsTool
-import com.gcap.client.data.model.GoogleSearchTool
-import com.gcap.client.data.model.ImageConfig
-import com.gcap.client.data.model.ImageOutputOptions
-import com.gcap.client.data.model.ModelRequestFormat
-import com.gcap.client.data.model.RetrievalConfig
-import com.gcap.client.data.model.SafetySetting
+import com.gcap.client.data.model.OpenAiChatRequest
 import com.gcap.client.data.model.StreamResponse
-import com.gcap.client.data.model.SystemInstruction
-import com.gcap.client.data.model.SystemPart
-import com.gcap.client.data.model.ThinkingConfig
-import com.gcap.client.data.model.Tool
-import com.gcap.client.data.model.ToolConfig
 import com.gcap.client.data.network.GeminiApiService
+import com.gcap.client.data.network.OpenAiApiService
 import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -28,7 +19,9 @@ import javax.inject.Singleton
 @Singleton
 class GeminiRepository @Inject constructor(
     private val apiService: GeminiApiService,
+    private val openAiApiService: OpenAiApiService,
     private val conversationDao: ConversationDao,
+    private val customProviderDao: CustomProviderDao,
     private val settingsDataStore: SettingsDataStore
 ) {
     fun streamGenerateContent(
@@ -37,6 +30,27 @@ class GeminiRepository @Inject constructor(
         request: GenerateContentRequest
     ): Flow<StreamResponse> {
         return apiService.streamGenerateContent(apiKey, modelId, request)
+    }
+
+    fun streamOpenAiChat(
+        baseUrl: String,
+        apiKey: String,
+        request: OpenAiChatRequest
+    ): Flow<StreamResponse> {
+        return openAiApiService.streamChatCompletion(baseUrl, apiKey, request)
+    }
+
+    suspend fun probeAndSaveModels(provider: CustomProviderEntity): Result<List<CustomModelEntity>> {
+        val probeResult = openAiApiService.probeModels(
+            providerId = provider.id,
+            baseUrl = provider.baseUrl,
+            apiKey = provider.apiKey
+        )
+        if (probeResult.isSuccess) {
+            val models = probeResult.getOrDefault(emptyList())
+            customProviderDao.replaceModelsForProvider(provider.id, models)
+        }
+        return probeResult
     }
 
     val apiKeyFlow: Flow<String> = settingsDataStore.apiKeyFlow
@@ -48,6 +62,24 @@ class GeminiRepository @Inject constructor(
 
     fun getMessages(conversationId: String): Flow<List<MessageEntity>> =
         conversationDao.getMessages(conversationId)
+
+    fun getAllProviders(): Flow<List<CustomProviderEntity>> = customProviderDao.getAllProviders()
+
+    suspend fun getProviderById(providerId: String): CustomProviderEntity? =
+        customProviderDao.getProviderById(providerId)
+
+    suspend fun upsertProvider(provider: CustomProviderEntity) {
+        customProviderDao.upsertProvider(provider)
+    }
+
+    suspend fun deleteProvider(providerId: String) {
+        customProviderDao.deleteProviderById(providerId)
+    }
+
+    fun getAllCustomModels(): Flow<List<CustomModelEntity>> = customProviderDao.getAllCustomModels()
+
+    fun getModelsByProvider(providerId: String): Flow<List<CustomModelEntity>> =
+        customProviderDao.getModelsByProvider(providerId)
 
     suspend fun insertConversation(conversation: ConversationEntity) {
         conversationDao.insertConversation(conversation)

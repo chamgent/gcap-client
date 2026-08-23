@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -18,6 +19,7 @@ import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -25,6 +27,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.gcap.client.data.model.ModelRequestFormat
 import com.gcap.client.ui.components.SafetySettingsPanel
 import java.util.Locale
 
@@ -46,20 +49,45 @@ fun ParameterPanel(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Text("模型参数配置 (${uiState.selectedModel.displayName})", style = MaterialTheme.typography.titleLarge)
-
-            // 系统指令 (System Instruction)
-            OutlinedTextField(
-                value = uiState.systemInstruction,
-                onValueChange = { viewModel.updateSystemInstruction(it) },
-                label = { Text("系统指令 (System Instruction)") },
-                placeholder = { Text("例如：You are a helpful coding assistant...") },
+            Row(
                 modifier = Modifier.fillMaxWidth(),
-                minLines = 3
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("模型参数配置", style = MaterialTheme.typography.titleLarge)
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer
+                ) {
+                    Text(
+                        text = uiState.selectedModel.providerName,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                    )
+                }
+            }
+
+            Text(
+                text = "当前选中模型: ${uiState.selectedModel.displayName}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
+            // 系统指令 (System Instruction)
+            if (uiState.selectedModel.supportsSystemInstruction) {
+                OutlinedTextField(
+                    value = uiState.systemInstruction,
+                    onValueChange = { viewModel.updateSystemInstruction(it) },
+                    label = { Text("系统指令 (System Instruction)") },
+                    placeholder = { Text("例如：You are a helpful coding assistant...") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 3
+                )
+            }
+
             HorizontalDivider()
-            Text("生成参数", style = MaterialTheme.typography.titleMedium)
+            Text("生成与采样参数", style = MaterialTheme.typography.titleMedium)
 
             // Max Output Tokens
             Column {
@@ -104,66 +132,71 @@ fun ParameterPanel(
                 }
             }
 
-            // Thinking Level
-            Column {
-                Text("思考级别 (Thinking Level)", style = MaterialTheme.typography.bodyMedium)
-                Spacer(modifier = Modifier.height(6.dp))
-                val levels = listOf("NONE", "MINIMAL", "MEDIUM", "HIGH")
-                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                    levels.forEachIndexed { index, level ->
-                        SegmentedButton(
-                            selected = uiState.thinkingLevel == level,
-                            onClick = { viewModel.updateThinkingLevel(level) },
-                            shape = SegmentedButtonDefaults.itemShape(index = index, count = levels.size)
-                        ) {
-                            Text(level)
+            // Thinking Level (for Google models with Thinking)
+            if (uiState.selectedModel.requestFormat == ModelRequestFormat.FORMAT_ONE || uiState.selectedModel.requestFormat == ModelRequestFormat.FORMAT_TWO) {
+                Column {
+                    Text("思考级别 (Thinking Level)", style = MaterialTheme.typography.bodyMedium)
+                    Spacer(modifier = Modifier.height(6.dp))
+                    val levels = listOf("NONE", "MINIMAL", "MEDIUM", "HIGH")
+                    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                        levels.forEachIndexed { index, level ->
+                            SegmentedButton(
+                                selected = uiState.thinkingLevel == level,
+                                onClick = { viewModel.updateThinkingLevel(level) },
+                                shape = SegmentedButtonDefaults.itemShape(index = index, count = levels.size)
+                            ) {
+                                Text(level)
+                            }
                         }
                     }
                 }
             }
 
-            HorizontalDivider()
-            SafetySettingsPanel(
-                state = uiState.safetySettings,
-                onStateChanged = { viewModel.updateSafetySettings(it) }
-            )
-
-            HorizontalDivider()
-            Text("内置工具与检索", style = MaterialTheme.typography.titleMedium)
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text("Google 搜索检索", style = MaterialTheme.typography.bodyLarge)
-                Switch(
-                    checked = uiState.googleSearchEnabled,
-                    onCheckedChange = { viewModel.updateGoogleSearchEnabled(it) }
+            // Safety Settings & Google Tools (Google Vertex AI specific)
+            if (!uiState.selectedModel.isCustom) {
+                HorizontalDivider()
+                SafetySettingsPanel(
+                    state = uiState.safetySettings,
+                    onStateChanged = { viewModel.updateSafetySettings(it) }
                 )
-            }
 
-            if (uiState.selectedModel.supportsGoogleMaps) {
+                HorizontalDivider()
+                Text("内置工具与检索", style = MaterialTheme.typography.titleMedium)
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text("Google 地图工具", style = MaterialTheme.typography.bodyLarge)
+                    Text("Google 搜索检索", style = MaterialTheme.typography.bodyLarge)
                     Switch(
-                        checked = uiState.googleMapsEnabled,
-                        onCheckedChange = { viewModel.updateGoogleMapsEnabled(it) }
+                        checked = uiState.googleSearchEnabled,
+                        onCheckedChange = { viewModel.updateGoogleSearch(it) }
                     )
                 }
-            }
 
-            OutlinedTextField(
-                value = uiState.toolConfigLanguageCode,
-                onValueChange = { viewModel.updateToolConfigLanguageCode(it) },
-                label = { Text("检索语言代码 (toolConfig.languageCode)") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true
-            )
+                if (uiState.selectedModel.supportsGoogleMaps) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("Google 地图工具", style = MaterialTheme.typography.bodyLarge)
+                        Switch(
+                            checked = uiState.googleMapsEnabled,
+                            onCheckedChange = { viewModel.updateGoogleMaps(it) }
+                        )
+                    }
+                }
+
+                OutlinedTextField(
+                    value = uiState.toolConfigLanguageCode,
+                    onValueChange = { viewModel.updateToolConfigLanguage(it) },
+                    label = { Text("检索语言代码 (toolConfig.languageCode)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+            }
 
             Spacer(modifier = Modifier.height(32.dp))
         }

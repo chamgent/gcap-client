@@ -78,6 +78,7 @@ fun ChatScreen(
     viewModel: ChatViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val availableModels by viewModel.availableModels.collectAsStateWithLifecycle()
     val conversations by viewModel.conversations.collectAsStateWithLifecycle()
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -133,6 +134,7 @@ fun ChatScreen(
                         Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                             ModelSelector(
                                 selectedModel = uiState.selectedModel,
+                                models = availableModels,
                                 onModelSelected = { viewModel.selectModel(it) }
                             )
                         }
