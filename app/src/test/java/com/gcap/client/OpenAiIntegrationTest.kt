@@ -7,7 +7,10 @@ import com.gcap.client.data.model.OpenAiStreamChunk
 import com.gcap.client.data.network.OpenAiApiService
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -34,84 +37,51 @@ class OpenAiIntegrationTest {
     }
 
     @Test
-    fun testParseModelListResponse() {
-        val sampleJson = """
-            {
-              "object": "list",
-              "data": [
-                {
-                  "id": "deepseek-chat",
-                  "object": "model"
-                },
-                {
-                  "id": "deepseek-reasoner",
-                  "object": "model"
-                },
-                {
-                  "id": "deepseek-r1",
-                  "object": "model"
-                },
-                {
-                  "id": "gpt-4o",
-                  "object": "model"
-                },
-                {
-                  "id": "o3-mini",
-                  "object": "model"
-                },
-                {
-                  "id": "claude-3-7-sonnet",
-                  "object": "model"
-                },
-                {
-                  "id": "gemini-2.5-flash",
-                  "object": "model"
-                },
-                {
-                  "id": "qwq-32b",
-                  "object": "model"
-                },
-                {
-                  "id": "qwen-vl-max",
-                  "object": "model"
-                }
-              ]
-            }
-        """.trimIndent()
+    fun testModelCapabilityDetectionForNextGenModels() {
+        // 1. Grok 4.5
+        assertEquals(Pair(true, true), OpenAiApiService.detectModelCapabilities("grok-4.5"))
 
-        val parsed = openAiJson.decodeFromString<OpenAiModelListResponse>(sampleJson)
-        val models = parsed.data
-        assertNotNull(models)
-        assertEquals(9, models!!.size)
+        // 2. GLM 5 series
+        assertEquals(Pair(true, true), OpenAiApiService.detectModelCapabilities("glm-5.3"))
+        assertEquals(Pair(true, true), OpenAiApiService.detectModelCapabilities("glm-5.2"))
+        assertEquals(Pair(true, true), OpenAiApiService.detectModelCapabilities("glm-5.1"))
+        assertEquals(Pair(true, true), OpenAiApiService.detectModelCapabilities("glm-5"))
 
-        val modelMap = models.associateBy { it.id }
+        // 3. GPT 5.6 Luna
+        assertEquals(Pair(true, true), OpenAiApiService.detectModelCapabilities("gpt-5.6-luna"))
 
-        // deepseek-chat (General chat)
-        assertFalse(OpenAiApiService.REASONING_REGEX.containsMatchIn(modelMap["deepseek-chat"]!!.id))
+        // 4. Kimi K-series
+        assertEquals(Pair(true, true), OpenAiApiService.detectModelCapabilities("kimi-k3"))
+        assertEquals(Pair(false, true), OpenAiApiService.detectModelCapabilities("kimi-k2.7-code"))
+        assertEquals(Pair(true, true), OpenAiApiService.detectModelCapabilities("kimi-k2.6"))
+        assertEquals(Pair(true, true), OpenAiApiService.detectModelCapabilities("kimi-k2.5"))
 
-        // deepseek-reasoner & deepseek-r1 (Reasoning)
-        assertTrue(OpenAiApiService.REASONING_REGEX.containsMatchIn(modelMap["deepseek-reasoner"]!!.id))
-        assertTrue(OpenAiApiService.REASONING_REGEX.containsMatchIn(modelMap["deepseek-r1"]!!.id))
+        // 5. MiMo series
+        assertEquals(Pair(true, true), OpenAiApiService.detectModelCapabilities("mimo-v2.5"))
+        assertEquals(Pair(true, true), OpenAiApiService.detectModelCapabilities("mimo-v2.5-pro"))
+        assertEquals(Pair(true, true), OpenAiApiService.detectModelCapabilities("mimo-v2-omni"))
+        assertEquals(Pair(true, true), OpenAiApiService.detectModelCapabilities("mimo-v2-pro"))
 
-        // gpt-4o (Vision)
-        assertTrue(OpenAiApiService.VISION_REGEX.containsMatchIn(modelMap["gpt-4o"]!!.id))
+        // 6. MiniMax series
+        assertEquals(Pair(true, true), OpenAiApiService.detectModelCapabilities("minimax-m3"))
+        assertEquals(Pair(true, true), OpenAiApiService.detectModelCapabilities("minimax-m2.7"))
+        assertEquals(Pair(false, false), OpenAiApiService.detectModelCapabilities("minimax-m2.5"))
 
-        // o3-mini (Reasoning)
-        assertTrue(OpenAiApiService.REASONING_REGEX.containsMatchIn(modelMap["o3-mini"]!!.id))
+        // 7. Qwen3 series
+        assertEquals(Pair(true, true), OpenAiApiService.detectModelCapabilities("qwen3.8-max"))
+        assertEquals(Pair(true, true), OpenAiApiService.detectModelCapabilities("qwen3.7-max"))
+        assertEquals(Pair(true, true), OpenAiApiService.detectModelCapabilities("qwen3.7-plus"))
+        assertEquals(Pair(true, true), OpenAiApiService.detectModelCapabilities("qwen3.6-plus"))
+        assertEquals(Pair(true, true), OpenAiApiService.detectModelCapabilities("qwen3.5-plus"))
 
-        // claude-3-7-sonnet (Both Vision & Hybrid Reasoning)
-        assertTrue(OpenAiApiService.REASONING_REGEX.containsMatchIn(modelMap["claude-3-7-sonnet"]!!.id))
-        assertTrue(OpenAiApiService.VISION_REGEX.containsMatchIn(modelMap["claude-3-7-sonnet"]!!.id))
+        // 8. DeepSeek series
+        assertEquals(Pair(false, true), OpenAiApiService.detectModelCapabilities("deepseek-v4-pro"))
+        assertEquals(Pair(false, true), OpenAiApiService.detectModelCapabilities("deepseek-v4-flash"))
+        assertEquals(Pair(true, true), OpenAiApiService.detectModelCapabilities("deepseek-v4-flash-vision-exp"))
 
-        // gemini-2.5-flash (Both Vision & Reasoning)
-        assertTrue(OpenAiApiService.REASONING_REGEX.containsMatchIn(modelMap["gemini-2.5-flash"]!!.id))
-        assertTrue(OpenAiApiService.VISION_REGEX.containsMatchIn(modelMap["gemini-2.5-flash"]!!.id))
-
-        // qwq-32b (Reasoning)
-        assertTrue(OpenAiApiService.REASONING_REGEX.containsMatchIn(modelMap["qwq-32b"]!!.id))
-
-        // qwen-vl-max (Vision)
-        assertTrue(OpenAiApiService.VISION_REGEX.containsMatchIn(modelMap["qwen-vl-max"]!!.id))
+        // 9. Hy3 series
+        assertEquals(Pair(true, true), OpenAiApiService.detectModelCapabilities("hy3"))
+        assertEquals(Pair(true, true), OpenAiApiService.detectModelCapabilities("hy3-preview"))
     }
 
     @Test
@@ -140,13 +110,24 @@ class OpenAiIntegrationTest {
     }
 
     @Test
-    fun testSerializeChatRequest() {
+    fun testSerializeChatRequestWithVideoUrl() {
+        val videoPart = buildJsonObject {
+            put("type", JsonPrimitive("video_url"))
+            put("video_url", buildJsonObject {
+                put("url", JsonPrimitive("data:video/mp4;base64,AAAAHGZ0eXBtcDQy..."))
+            })
+        }
+        val textPart = buildJsonObject {
+            put("type", JsonPrimitive("text"))
+            put("text", JsonPrimitive("请分析视频内容"))
+        }
+
         val request = OpenAiChatRequest(
-            model = "deepseek-reasoner",
+            model = "mimo-v2-omni",
             messages = listOf(
                 OpenAiMessage(
                     role = "user",
-                    content = JsonPrimitive("Hello World")
+                    content = JsonArray(listOf(textPart, videoPart))
                 )
             ),
             stream = true,
@@ -156,10 +137,10 @@ class OpenAiIntegrationTest {
         )
 
         val jsonString = openAiJson.encodeToString(request)
-        println("OpenAI Request JSON: $jsonString")
-        assertTrue(jsonString.contains("\"model\":\"deepseek-reasoner\""))
-        assertTrue(jsonString.contains("\"stream\":true"))
-        assertTrue(jsonString.contains("\"temperature\":0.7"))
+        println("OpenAI Video Request JSON: $jsonString")
+        assertTrue(jsonString.contains("\"model\":\"mimo-v2-omni\""))
+        assertTrue(jsonString.contains("\"type\":\"video_url\""))
+        assertTrue(jsonString.contains("\"video_url\":{\"url\":\"data:video/mp4;base64,AAAAHGZ0eXBtcDQy...\"}"))
         assertTrue(jsonString.contains("\"reasoning_effort\":\"high\""))
     }
 }

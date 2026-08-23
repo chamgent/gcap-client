@@ -573,15 +573,27 @@ class ChatViewModel @Inject constructor(
                     val base64 = img.base64Data ?: img.uri?.let { imageStorageManager.getBase64FromUri(it) }
                     if (!base64.isNullOrBlank()) {
                         val cleanBase64 = base64.substringAfter("base64,").trim()
+                        val isVideo = img.mimeType.startsWith("video/")
                         val dataUrl = "data:${img.mimeType};base64,$cleanBase64"
-                        parts.add(
-                            buildJsonObject {
-                                put("type", JsonPrimitive("image_url"))
-                                put("image_url", buildJsonObject {
-                                    put("url", JsonPrimitive(dataUrl))
-                                })
-                            }
-                        )
+                        if (isVideo) {
+                            parts.add(
+                                buildJsonObject {
+                                    put("type", JsonPrimitive("video_url"))
+                                    put("video_url", buildJsonObject {
+                                        put("url", JsonPrimitive(dataUrl))
+                                    })
+                                }
+                            )
+                        } else {
+                            parts.add(
+                                buildJsonObject {
+                                    put("type", JsonPrimitive("image_url"))
+                                    put("image_url", buildJsonObject {
+                                        put("url", JsonPrimitive(dataUrl))
+                                    })
+                                }
+                            )
+                        }
                     }
                 }
                 openAiMessages.add(
@@ -600,12 +612,12 @@ class ChatViewModel @Inject constructor(
             }
         }
 
-        val reasoningEffortVal = if (state.selectedModel.supportsReasoning) {
+        val reasoningEffortVal = if (state.selectedModel.supportsReasoning && state.thinkingLevel != "OFF") {
             when (state.thinkingLevel) {
                 "MINIMAL", "LOW" -> "low"
                 "MEDIUM" -> "medium"
                 "HIGH" -> "high"
-                else -> "medium"
+                else -> null
             }
         } else null
 
@@ -650,11 +662,15 @@ class ChatViewModel @Inject constructor(
             SystemInstruction(parts = listOf(SystemPart(text = state.systemInstruction)))
         } else null
 
+        val thinkingConfigVal = if (state.thinkingLevel != "OFF") {
+            ThinkingConfig(thinkingLevel = state.thinkingLevel)
+        } else null
+
         val generationConfig = when (state.selectedModel.requestFormat) {
             ModelRequestFormat.FORMAT_ONE -> {
                 GenerationConfig(
                     maxOutputTokens = state.maxOutputTokens,
-                    thinkingConfig = ThinkingConfig(thinkingLevel = state.thinkingLevel)
+                    thinkingConfig = thinkingConfigVal
                 )
             }
             ModelRequestFormat.FORMAT_TWO -> {
@@ -662,7 +678,7 @@ class ChatViewModel @Inject constructor(
                     temperature = state.temperature,
                     topP = state.topP,
                     maxOutputTokens = state.maxOutputTokens,
-                    thinkingConfig = ThinkingConfig(thinkingLevel = state.thinkingLevel)
+                    thinkingConfig = thinkingConfigVal
                 )
             }
             ModelRequestFormat.FORMAT_IMAGE, ModelRequestFormat.FORMAT_OPENAI -> {

@@ -46,12 +46,67 @@ class OpenAiApiService @Inject constructor(
     companion object {
         private const val TAG = "OpenAiApiService"
 
-        val VISION_REGEX = Regex(
-            "(?i)(vision|4o|4.5|5.6|5|claude|gemini|vl|omni|llava|qwen|minicpm|pixtral|internvl|multimodal|grok|image|qvq|glm|sonnet|opus|haiku|step|yi-vision|mimo|kimi|deepseek-.*vision)"
-        )
-        val REASONING_REGEX = Regex(
-            "(?i)(r1|o1|o3|o4|reason|reasoner|reasoning|thinking|think|qwq|claude-3-7|claude-3.7|sonnet-3-7|sonnet-3.7|gemini-2.5|gemini-2.0-flash-thinking|k1.5|kimi-k|glm-5|deepseek-v4|deepseek-r|qwen3|minimax-m|mimo|hy3|gpt-5|grok|marco-o1|qvq)"
-        )
+        fun detectModelCapabilities(modelId: String): Pair<Boolean, Boolean> {
+            val id = modelId.lowercase()
+
+            // Explicit known overrides
+            when {
+                id == "kimi-k2.7-code" -> return Pair(false, true)
+                id == "deepseek-v4-flash-vision-exp" -> return Pair(true, true)
+                id.startsWith("deepseek-v4") || id.startsWith("deepseek-r1") || id.startsWith("deepseek-pro") -> return Pair(false, true)
+                id.startsWith("minimax-m2.5") -> return Pair(false, false)
+                id == "ox-alpha-free" -> return Pair(false, true)
+                id == "muse-spark-1.2-contributor" -> return Pair(false, false)
+            }
+
+            // Heuristic reasoning matching
+            val supportsReasoning = id.contains("r1") ||
+                id.contains("o1") ||
+                id.contains("o3") ||
+                id.contains("o4") ||
+                id.contains("reason") ||
+                id.contains("thinking") ||
+                id.contains("think") ||
+                id.contains("qwq") ||
+                id.contains("qvq") ||
+                id.contains("claude-3-7") ||
+                id.contains("claude-3.7") ||
+                id.contains("sonnet-3-7") ||
+                id.contains("gemini-2.5") ||
+                id.contains("glm-5") ||
+                id.contains("kimi-k") ||
+                id.contains("mimo") ||
+                id.contains("minimax-m") ||
+                id.contains("qwen3") ||
+                id.contains("gpt-5") ||
+                id.contains("grok-4") ||
+                id.contains("hy3")
+
+            // Heuristic vision matching
+            val supportsVision = id.contains("vision") ||
+                id.contains("vl") ||
+                id.contains("omni") ||
+                id.contains("4o") ||
+                id.contains("4.5") ||
+                id.contains("5.6") ||
+                id.contains("claude") ||
+                id.contains("gemini") ||
+                id.contains("llava") ||
+                id.contains("qwen") ||
+                id.contains("minicpm") ||
+                id.contains("pixtral") ||
+                id.contains("internvl") ||
+                id.contains("multimodal") ||
+                id.contains("glm") ||
+                id.contains("mimo") ||
+                id.contains("hy3") ||
+                (id.contains("minimax-m") && !id.contains("m2.5")) ||
+                (id.contains("kimi-k") && !id.contains("code")) ||
+                id.contains("grok-4") ||
+                id.contains("gpt-5")
+
+            return Pair(supportsVision, supportsReasoning)
+        }
 
         fun normalizeBaseUrl(rawUrl: String): String {
             var url = rawUrl.trim().trimEnd('/')
@@ -92,8 +147,7 @@ class OpenAiApiService @Inject constructor(
 
             val entities = rawModels.map { modelItem ->
                 val modelId = modelItem.id
-                val supportsVision = VISION_REGEX.containsMatchIn(modelId)
-                val supportsReasoning = REASONING_REGEX.containsMatchIn(modelId)
+                val (supportsVision, supportsReasoning) = detectModelCapabilities(modelId)
 
                 CustomModelEntity(
                     id = "${providerId}_${modelId}",

@@ -154,7 +154,7 @@ fun ParameterPanel(
                         }
                     }
                     Spacer(modifier = Modifier.height(6.dp))
-                    val levels = listOf("MINIMAL", "LOW", "MEDIUM", "HIGH")
+                    val levels = listOf("OFF", "MINIMAL", "LOW", "MEDIUM", "HIGH")
                     SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
                         levels.forEachIndexed { index, level ->
                             SegmentedButton(
