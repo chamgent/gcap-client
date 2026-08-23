@@ -252,6 +252,12 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun updateModelCapabilities(modelId: String, supportsVision: Boolean, supportsReasoning: Boolean) {
+        viewModelScope.launch {
+            repository.updateModelCapabilities(modelId, supportsVision, supportsReasoning)
+        }
+    }
+
     fun clearAllConversations() {
         viewModelScope.launch(Dispatchers.IO) {
             conversationDao.deleteAllConversations()
@@ -282,6 +288,7 @@ fun SettingsScreen(
     var showClearDialog by remember { mutableStateOf(false) }
     var providerDialogTarget by remember { mutableStateOf<CustomProviderEntity?>(null) }
     var showAddProviderDialog by remember { mutableStateOf(false) }
+    var modelEditTarget by remember { mutableStateOf<CustomModelEntity?>(null) }
 
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
@@ -471,22 +478,28 @@ fun SettingsScreen(
                                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                                             verticalArrangement = Arrangement.spacedBy(4.dp)
                                         ) {
-                                            providerModels.take(8).forEach { m ->
+                                            providerModels.forEach { m ->
                                                 Surface(
                                                     shape = RoundedCornerShape(6.dp),
-                                                    color = MaterialTheme.colorScheme.surface
+                                                    color = MaterialTheme.colorScheme.surface,
+                                                    modifier = Modifier
+                                                        .clip(RoundedCornerShape(6.dp))
+                                                        .clickable {
+                                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                            modelEditTarget = m
+                                                        }
                                                 ) {
                                                     Row(
-                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp),
                                                         verticalAlignment = Alignment.CenterVertically,
-                                                        horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
                                                     ) {
                                                         Text(text = m.displayName, style = MaterialTheme.typography.labelSmall)
                                                         if (m.supportsVision) {
                                                             Icon(
                                                                 imageVector = Icons.Outlined.Visibility,
                                                                 contentDescription = "视觉",
-                                                                modifier = Modifier.size(10.dp),
+                                                                modifier = Modifier.size(11.dp),
                                                                 tint = MaterialTheme.colorScheme.primary
                                                             )
                                                         }
@@ -494,20 +507,12 @@ fun SettingsScreen(
                                                             Icon(
                                                                 imageVector = Icons.Outlined.Psychology,
                                                                 contentDescription = "推理",
-                                                                modifier = Modifier.size(11.dp),
+                                                                modifier = Modifier.size(12.dp),
                                                                 tint = MaterialTheme.colorScheme.secondary
                                                             )
                                                         }
                                                     }
                                                 }
-                                            }
-                                            if (providerModels.size > 8) {
-                                                Text(
-                                                    text = "+${providerModels.size - 8} 更多...",
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                    modifier = Modifier.align(Alignment.CenterVertically)
-                                                )
                                             }
                                         }
                                     }
@@ -733,6 +738,18 @@ fun SettingsScreen(
         )
     }
 
+    modelEditTarget?.let { targetModel ->
+        ModelCapabilityEditDialog(
+            model = targetModel,
+            onDismiss = { modelEditTarget = null },
+            onSave = { vision, reasoning ->
+                viewModel.updateModelCapabilities(targetModel.id, vision, reasoning)
+                modelEditTarget = null
+                Toast.makeText(context, "已更新模型能力标注: ${targetModel.displayName}", Toast.LENGTH_SHORT).show()
+            }
+        )
+    }
+
     if (showClearDialog) {
         AlertDialog(
             onDismissRequest = { showClearDialog = false },
@@ -824,6 +841,71 @@ fun ProviderEditDialog(
                 enabled = name.isNotBlank() && baseUrl.isNotBlank() && apiKey.isNotBlank()
             ) {
                 Text("探测并保存")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消")
+            }
+        }
+    )
+}
+
+@Composable
+fun ModelCapabilityEditDialog(
+    model: CustomModelEntity,
+    onDismiss: () -> Unit,
+    onSave: (supportsVision: Boolean, supportsReasoning: Boolean) -> Unit
+) {
+    var vision by remember { mutableStateOf(model.supportsVision) }
+    var reasoning by remember { mutableStateOf(model.supportsReasoning) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("自定义模型能力") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Text(
+                    text = "模型 ID: ${model.displayName}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Icon(Icons.Outlined.Visibility, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+                            Text("多模态视觉 (Vision)", style = MaterialTheme.typography.bodyLarge)
+                        }
+                        Text("支持发送图片与视觉分析", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(checked = vision, onCheckedChange = { vision = it })
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Icon(Icons.Outlined.Psychology, contentDescription = null, modifier = Modifier.size(17.dp), tint = MaterialTheme.colorScheme.secondary)
+                            Text("思维链推理 (Reasoning)", style = MaterialTheme.typography.bodyLarge)
+                        }
+                        Text("支持展示思考过程与深度推理", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(checked = reasoning, onCheckedChange = { reasoning = it })
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = { onSave(vision, reasoning) }) {
+                Text("保存")
             }
         },
         dismissButton = {

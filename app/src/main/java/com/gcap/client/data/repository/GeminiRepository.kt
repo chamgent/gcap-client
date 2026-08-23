@@ -78,6 +78,10 @@ class GeminiRepository @Inject constructor(
 
     fun getAllCustomModels(): Flow<List<CustomModelEntity>> = customProviderDao.getAllCustomModels()
 
+    suspend fun updateModelCapabilities(modelId: String, supportsVision: Boolean, supportsReasoning: Boolean) {
+        customProviderDao.updateModelCapabilities(modelId, supportsVision, supportsReasoning)
+    }
+
     fun getModelsByProvider(providerId: String): Flow<List<CustomModelEntity>> =
         customProviderDao.getModelsByProvider(providerId)
 

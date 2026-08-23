@@ -41,18 +41,34 @@ class OpenAiIntegrationTest {
               "data": [
                 {
                   "id": "deepseek-chat",
-                  "object": "model",
-                  "created": 1700000000,
-                  "owned_by": "deepseek"
+                  "object": "model"
                 },
                 {
                   "id": "deepseek-reasoner",
-                  "object": "model",
-                  "created": 1700000000,
-                  "owned_by": "deepseek"
+                  "object": "model"
+                },
+                {
+                  "id": "deepseek-r1",
+                  "object": "model"
                 },
                 {
                   "id": "gpt-4o",
+                  "object": "model"
+                },
+                {
+                  "id": "o3-mini",
+                  "object": "model"
+                },
+                {
+                  "id": "claude-3-7-sonnet",
+                  "object": "model"
+                },
+                {
+                  "id": "gemini-2.5-flash",
+                  "object": "model"
+                },
+                {
+                  "id": "qwq-32b",
                   "object": "model"
                 },
                 {
@@ -66,23 +82,36 @@ class OpenAiIntegrationTest {
         val parsed = openAiJson.decodeFromString<OpenAiModelListResponse>(sampleJson)
         val models = parsed.data
         assertNotNull(models)
-        assertEquals(4, models!!.size)
+        assertEquals(9, models!!.size)
 
-        val reasoningRegex = Regex("(?i)(r1|o1|o3|o4|reason|reasoner|reasoning|deepseek-r1|qwq|thinking)")
-        val visionRegex = Regex("(?i)(vision|4o|4.5|claude|gemini|vl|omni|llava|qwen-vl|minicpm|pixtral|internvl|multimodal)")
+        val modelMap = models.associateBy { it.id }
 
-        // deepseek-chat
-        assertFalse(reasoningRegex.containsMatchIn(models[0].id))
-        assertFalse(visionRegex.containsMatchIn(models[0].id))
+        // deepseek-chat (General chat)
+        assertFalse(OpenAiApiService.REASONING_REGEX.containsMatchIn(modelMap["deepseek-chat"]!!.id))
 
-        // deepseek-reasoner
-        assertTrue(reasoningRegex.containsMatchIn(models[1].id))
+        // deepseek-reasoner & deepseek-r1 (Reasoning)
+        assertTrue(OpenAiApiService.REASONING_REGEX.containsMatchIn(modelMap["deepseek-reasoner"]!!.id))
+        assertTrue(OpenAiApiService.REASONING_REGEX.containsMatchIn(modelMap["deepseek-r1"]!!.id))
 
-        // gpt-4o
-        assertTrue(visionRegex.containsMatchIn(models[2].id))
+        // gpt-4o (Vision)
+        assertTrue(OpenAiApiService.VISION_REGEX.containsMatchIn(modelMap["gpt-4o"]!!.id))
 
-        // qwen-vl-max
-        assertTrue(visionRegex.containsMatchIn(models[3].id))
+        // o3-mini (Reasoning)
+        assertTrue(OpenAiApiService.REASONING_REGEX.containsMatchIn(modelMap["o3-mini"]!!.id))
+
+        // claude-3-7-sonnet (Both Vision & Hybrid Reasoning)
+        assertTrue(OpenAiApiService.REASONING_REGEX.containsMatchIn(modelMap["claude-3-7-sonnet"]!!.id))
+        assertTrue(OpenAiApiService.VISION_REGEX.containsMatchIn(modelMap["claude-3-7-sonnet"]!!.id))
+
+        // gemini-2.5-flash (Both Vision & Reasoning)
+        assertTrue(OpenAiApiService.REASONING_REGEX.containsMatchIn(modelMap["gemini-2.5-flash"]!!.id))
+        assertTrue(OpenAiApiService.VISION_REGEX.containsMatchIn(modelMap["gemini-2.5-flash"]!!.id))
+
+        // qwq-32b (Reasoning)
+        assertTrue(OpenAiApiService.REASONING_REGEX.containsMatchIn(modelMap["qwq-32b"]!!.id))
+
+        // qwen-vl-max (Vision)
+        assertTrue(OpenAiApiService.VISION_REGEX.containsMatchIn(modelMap["qwen-vl-max"]!!.id))
     }
 
     @Test

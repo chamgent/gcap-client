@@ -46,8 +46,12 @@ class OpenAiApiService @Inject constructor(
     companion object {
         private const val TAG = "OpenAiApiService"
 
-        private val VISION_REGEX = Regex("(?i)(vision|4o|4.5|claude|gemini|vl|omni|llava|qwen-vl|minicpm|pixtral|internvl|multimodal)")
-        private val REASONING_REGEX = Regex("(?i)(r1|o1|o3|o4|reason|reasoner|reasoning|deepseek-r1|qwq|thinking)")
+        val VISION_REGEX = Regex(
+            "(?i)(vision|4o|4.5|claude|gemini|vl|omni|llava|qwen-vl|minicpm|pixtral|internvl|multimodal|grok-2-vision|image|qvq|glm-4v|sonnet|opus|haiku|step-2|yi-vision)"
+        )
+        val REASONING_REGEX = Regex(
+            "(?i)(r1|o1|o3|o4|reason|reasoner|reasoning|thinking|think|qwq|claude-3-7|claude-3.7|sonnet-3-7|sonnet-3.7|gemini-2.5|gemini-2.0-flash-thinking|k1.5|kimi-k1.5|marco-o1|qvq|deepseek-r1|deepseek-reasoner)"
+        )
 
         fun normalizeBaseUrl(rawUrl: String): String {
             var url = rawUrl.trim().trimEnd('/')
@@ -150,6 +154,8 @@ class OpenAiApiService @Inject constructor(
                     return
                 }
 
+                var insideThinkTag = false
+
                 try {
                     while (!source.exhausted()) {
                         val line = source.readUtf8Line() ?: break
@@ -169,6 +175,7 @@ class OpenAiApiService @Inject constructor(
                                 val reasoningText = delta?.reasoningContent ?: delta?.reasoning
                                 val contentText = delta?.content
 
+                                // 1. Server returned delta.reasoning_content (e.g. DeepSeek / OpenRouter standard)
                                 if (!reasoningText.isNullOrEmpty()) {
                                     val streamResp = StreamResponse(
                                         candidates = listOf(
@@ -183,18 +190,139 @@ class OpenAiApiService @Inject constructor(
                                     trySend(streamResp).isSuccess
                                 }
 
+                                // 2. Server returned delta.content with potential <think>...</think> tags
                                 if (!contentText.isNullOrEmpty()) {
-                                    val streamResp = StreamResponse(
-                                        candidates = listOf(
-                                            Candidate(
-                                                content = Content(
-                                                    role = "model",
-                                                    parts = listOf(Part(text = contentText, thought = null))
+                                    if (insideThinkTag) {
+                                        if (contentText.contains("</think>")) {
+                                            val thoughtPart = contentText.substringBefore("</think>")
+                                            val regularPart = contentText.substringAfter("</think>")
+                                            insideThinkTag = false
+
+                                            if (thoughtPart.isNotEmpty()) {
+                                                trySend(
+                                                    StreamResponse(
+                                                        candidates = listOf(
+                                                            Candidate(
+                                                                content = Content(
+                                                                    role = "model",
+                                                                    parts = listOf(Part(text = thoughtPart, thought = true))
+                                                                )
+                                                            )
+                                                        )
+                                                    )
+                                                ).isSuccess
+                                            }
+                                            if (regularPart.isNotEmpty()) {
+                                                trySend(
+                                                    StreamResponse(
+                                                        candidates = listOf(
+                                                            Candidate(
+                                                                content = Content(
+                                                                    role = "model",
+                                                                    parts = listOf(Part(text = regularPart, thought = null))
+                                                                )
+                                                            )
+                                                        )
+                                                    )
+                                                ).isSuccess
+                                            }
+                                        } else {
+                                            trySend(
+                                                StreamResponse(
+                                                    candidates = listOf(
+                                                        Candidate(
+                                                            content = Content(
+                                                                role = "model",
+                                                                parts = listOf(Part(text = contentText, thought = true))
+                                                            )
+                                                        )
+                                                    )
                                                 )
-                                            )
-                                        )
-                                    )
-                                    trySend(streamResp).isSuccess
+                                            ).isSuccess
+                                        }
+                                    } else {
+                                        if (contentText.contains("<think>")) {
+                                            val beforeThink = contentText.substringBefore("<think>")
+                                            val afterStart = contentText.substringAfter("<think>")
+                                            if (beforeThink.isNotEmpty()) {
+                                                trySend(
+                                                    StreamResponse(
+                                                        candidates = listOf(
+                                                            Candidate(
+                                                                content = Content(
+                                                                    role = "model",
+                                                                    parts = listOf(Part(text = beforeThink, thought = null))
+                                                                )
+                                                            )
+                                                        )
+                                                    )
+                                                ).isSuccess
+                                            }
+
+                                            if (afterStart.contains("</think>")) {
+                                                val thoughtPart = afterStart.substringBefore("</think>")
+                                                val afterEnd = afterStart.substringAfter("</think>")
+                                                insideThinkTag = false
+                                                if (thoughtPart.isNotEmpty()) {
+                                                    trySend(
+                                                        StreamResponse(
+                                                            candidates = listOf(
+                                                                Candidate(
+                                                                    content = Content(
+                                                                        role = "model",
+                                                                        parts = listOf(Part(text = thoughtPart, thought = true))
+                                                                    )
+                                                                )
+                                                            )
+                                                        )
+                                                    ).isSuccess
+                                                }
+                                                if (afterEnd.isNotEmpty()) {
+                                                    trySend(
+                                                        StreamResponse(
+                                                            candidates = listOf(
+                                                                Candidate(
+                                                                    content = Content(
+                                                                        role = "model",
+                                                                        parts = listOf(Part(text = afterEnd, thought = null))
+                                                                    )
+                                                                )
+                                                            )
+                                                        )
+                                                    ).isSuccess
+                                                }
+                                            } else {
+                                                insideThinkTag = true
+                                                if (afterStart.isNotEmpty()) {
+                                                    trySend(
+                                                        StreamResponse(
+                                                            candidates = listOf(
+                                                                Candidate(
+                                                                    content = Content(
+                                                                        role = "model",
+                                                                        parts = listOf(Part(text = afterStart, thought = true))
+                                                                    )
+                                                                )
+                                                            )
+                                                        )
+                                                    ).isSuccess
+                                                }
+                                            }
+                                        } else {
+                                            trySend(
+                                                StreamResponse(
+                                                    candidates = listOf(
+                                                        Candidate(
+                                                            content = Content(
+                                                                role = "model",
+                                                                parts = listOf(Part(text = contentText, thought = null))
+                                                            )
+                                                        )
+                                                    )
+                                                )
+                                            ).isSuccess
+                                        }
+                                    }
                                 }
 
                                 if (chunk.usage != null) {

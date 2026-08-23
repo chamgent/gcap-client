@@ -39,6 +39,9 @@ interface CustomProviderDao {
     @Query("DELETE FROM custom_models WHERE providerId = :providerId")
     suspend fun deleteModelsByProvider(providerId: String)
 
+    @Query("UPDATE custom_models SET supportsVision = :supportsVision, supportsReasoning = :supportsReasoning WHERE id = :id")
+    suspend fun updateModelCapabilities(id: String, supportsVision: Boolean, supportsReasoning: Boolean)
+
     @Transaction
     suspend fun replaceModelsForProvider(providerId: String, models: List<CustomModelEntity>) {
         deleteModelsByProvider(providerId)
