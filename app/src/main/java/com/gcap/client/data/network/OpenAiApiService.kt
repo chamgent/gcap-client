@@ -30,11 +30,19 @@ import java.io.IOException
 import javax.inject.Inject
 import javax.inject.Singleton
 
+@OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
 @Singleton
 class OpenAiApiService @Inject constructor(
     private val okHttpClient: OkHttpClient,
     private val json: Json
 ) {
+    private val openAiJson = Json {
+        ignoreUnknownKeys = true
+        encodeDefaults = true
+        explicitNulls = false
+        isLenient = true
+    }
+
     companion object {
         private const val TAG = "OpenAiApiService"
 
@@ -75,7 +83,7 @@ class OpenAiApiService @Inject constructor(
             }
 
             val bodyString = response.body?.string() ?: ""
-            val parsed = json.decodeFromString<OpenAiModelListResponse>(bodyString)
+            val parsed = openAiJson.decodeFromString<OpenAiModelListResponse>(bodyString)
             val rawModels = parsed.data ?: emptyList()
 
             val entities = rawModels.map { modelItem ->
@@ -108,7 +116,7 @@ class OpenAiApiService @Inject constructor(
         val normalizedUrl = normalizeBaseUrl(baseUrl)
         val requestUrl = "$normalizedUrl/chat/completions"
 
-        val requestBodyString = json.encodeToString(request)
+        val requestBodyString = openAiJson.encodeToString(request)
         Log.d(TAG, "OpenAI Request to $requestUrl: $requestBodyString")
 
         val requestBody = requestBodyString.toRequestBody("application/json".toMediaType())
@@ -154,7 +162,7 @@ class OpenAiApiService @Inject constructor(
                             }
 
                             try {
-                                val chunk = json.decodeFromString<OpenAiStreamChunk>(data)
+                                val chunk = openAiJson.decodeFromString<OpenAiStreamChunk>(data)
                                 val choice = chunk.choices?.firstOrNull()
                                 val delta = choice?.delta
 
