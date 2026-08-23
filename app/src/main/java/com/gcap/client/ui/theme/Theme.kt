@@ -56,6 +56,7 @@ private val DarkColorScheme = darkColorScheme(
 @Composable
 fun GcapTheme(
     themeMode: String = "system",
+    dynamicColor: Boolean = true,
     content: @Composable () -> Unit
 ) {
     val systemInDarkTheme = isSystemInDarkTheme()
@@ -65,7 +66,7 @@ fun GcapTheme(
         else -> systemInDarkTheme
     }
     val colorScheme = when {
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
+        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
             val context = LocalContext.current
             if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         }

@@ -27,8 +27,9 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             val themeMode by settingsDataStore.themeModeFlow.collectAsStateWithLifecycle(initialValue = "system")
+            val dynamicColor by settingsDataStore.dynamicColorFlow.collectAsStateWithLifecycle(initialValue = true)
 
-            GcapTheme(themeMode = themeMode) {
+            GcapTheme(themeMode = themeMode, dynamicColor = dynamicColor) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background

@@ -23,8 +23,21 @@ class SettingsDataStore @Inject constructor(
     companion object {
         val API_KEY = stringPreferencesKey("api_key")
         val THEME_MODE = stringPreferencesKey("theme_mode")
+        val DYNAMIC_COLOR = androidx.datastore.preferences.core.booleanPreferencesKey("dynamic_color")
         val DEFAULT_CHAT_MODEL = stringPreferencesKey("default_chat_model")
         val DEFAULT_IMAGE_MODEL = stringPreferencesKey("default_image_model")
+    }
+
+    val dynamicColorFlow: Flow<Boolean> = dataStore.data.map { preferences ->
+        preferences[DYNAMIC_COLOR] ?: true
+    }
+
+    fun getDynamicColor(): Flow<Boolean> = dynamicColorFlow
+
+    suspend fun setDynamicColor(enabled: Boolean) {
+        dataStore.edit { preferences ->
+            preferences[DYNAMIC_COLOR] = enabled
+        }
     }
 
     val apiKeyFlow: Flow<String> = dataStore.data.map { preferences ->

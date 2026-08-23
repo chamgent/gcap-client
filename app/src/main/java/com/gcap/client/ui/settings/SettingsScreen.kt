@@ -90,6 +90,9 @@ class SettingsViewModel @Inject constructor(
     val themeMode = settingsDataStore.themeModeFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "system")
 
+    val dynamicColor = settingsDataStore.dynamicColorFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+
     val defaultChatModel = settingsDataStore.defaultChatModelFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "gemini-3.7-flash")
 
@@ -111,6 +114,12 @@ class SettingsViewModel @Inject constructor(
     fun updateThemeMode(mode: String) {
         viewModelScope.launch {
             settingsDataStore.setThemeMode(mode)
+        }
+    }
+
+    fun updateDynamicColor(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsDataStore.setDynamicColor(enabled)
         }
     }
 
@@ -168,6 +177,7 @@ fun SettingsScreen(
 ) {
     val apiKey by viewModel.apiKey.collectAsStateWithLifecycle()
     val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
+    val dynamicColor by viewModel.dynamicColor.collectAsStateWithLifecycle()
     val defaultChatModel by viewModel.defaultChatModel.collectAsStateWithLifecycle()
     val defaultImageModel by viewModel.defaultImageModel.collectAsStateWithLifecycle()
 
@@ -179,6 +189,7 @@ fun SettingsScreen(
     var showClearDialog by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     val scrollState = rememberScrollState()
 
     Scaffold(
@@ -279,11 +290,40 @@ fun SettingsScreen(
                     options.forEachIndexed { index, (label, value) ->
                         SegmentedButton(
                             selected = index == selectedIndex,
-                            onClick = { viewModel.updateThemeMode(value) },
+                            onClick = {
+                                haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                                viewModel.updateThemeMode(value)
+                            },
                             shape = SegmentedButtonDefaults.itemShape(index = index, count = options.size)
                         ) {
                             Text(label)
                         }
+                    }
+                }
+
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Material You 动态取色", style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                "跟随系统壁纸色调自动渲染应用界面色彩",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        androidx.compose.material3.Switch(
+                            checked = dynamicColor,
+                            onCheckedChange = {
+                                haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                                viewModel.updateDynamicColor(it)
+                            }
+                        )
                     }
                 }
             }

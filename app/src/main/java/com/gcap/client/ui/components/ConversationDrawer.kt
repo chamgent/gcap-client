@@ -46,11 +46,16 @@ fun ConversationDrawer(
     onDeleteConversation: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+
     ModalDrawerSheet(modifier = modifier) {
         Column(modifier = Modifier.fillMaxSize()) {
             Box(modifier = Modifier.padding(16.dp)) {
                 ExtendedFloatingActionButton(
-                    onClick = onNewConversation,
+                    onClick = {
+                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                        onNewConversation()
+                    },
                     icon = { Icon(Icons.Default.Add, contentDescription = "新建对话") },
                     text = { Text("新建对话") },
                     modifier = Modifier.fillMaxWidth()
@@ -95,6 +100,7 @@ fun ConversationDrawer(
                             val dismissState = rememberSwipeToDismissBoxState(
                                 confirmValueChange = {
                                     if (it == SwipeToDismissBoxValue.EndToStart) {
+                                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                                         onDeleteConversation(conversation.id)
                                         true
                                     } else {

@@ -1,5 +1,10 @@
 package com.gcap.client.ui.chat
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,10 +21,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
@@ -27,7 +34,6 @@ import androidx.compose.material.icons.outlined.AddCircleOutline
 import androidx.compose.material.icons.outlined.Audiotrack
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Description
-import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Videocam
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.DrawerValue
@@ -46,6 +52,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -53,6 +60,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -71,12 +81,25 @@ fun ChatScreen(
     val conversations by viewModel.conversations.collectAsStateWithLifecycle()
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+    val haptic = LocalHapticFeedback.current
+
     var showParameterPanel by remember { mutableStateOf(false) }
     var inputText by remember { mutableStateOf("") }
     var attachedImages by remember { mutableStateOf<List<MessageImage>>(emptyList()) }
     var showImagePicker by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
     val listState = rememberLazyListState()
+
+    val showScrollToBottom by remember {
+        derivedStateOf { listState.firstVisibleItemIndex > 1 }
+    }
+
+    // Auto-scroll when new messages/tokens arrive if user is near bottom
+    LaunchedEffect(uiState.messages.firstOrNull()?.textContent?.length, uiState.messages.size) {
+        if (listState.firstVisibleItemIndex <= 1 && uiState.messages.isNotEmpty()) {
+            listState.scrollToItem(0)
+        }
+    }
 
     LaunchedEffect(uiState.error) {
         uiState.error?.let {
@@ -155,7 +178,10 @@ fun ChatScreen(
                                         else -> Pair(Icons.Outlined.Description, "文档 ${index + 1}")
                                     }
                                     AssistChip(
-                                        onClick = { attachedImages = attachedImages.filterIndexed { i, _ -> i != index } },
+                                        onClick = {
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            attachedImages = attachedImages.filterIndexed { i, _ -> i != index }
+                                        },
                                         leadingIcon = { Icon(icon, contentDescription = null, modifier = Modifier.size(14.dp)) },
                                         label = { Text(file.name ?: defaultLabel, maxLines = 1) },
                                         trailingIcon = {
@@ -194,7 +220,12 @@ fun ChatScreen(
                             Spacer(modifier = Modifier.width(8.dp))
 
                             if (uiState.isGenerating) {
-                                IconButton(onClick = { viewModel.stopGeneration() }) {
+                                IconButton(
+                                    onClick = {
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        viewModel.stopGeneration()
+                                    }
+                                ) {
                                     Icon(
                                         Icons.Default.Stop,
                                         contentDescription = "停止生成",
@@ -204,6 +235,7 @@ fun ChatScreen(
                             } else {
                                 IconButton(
                                     onClick = {
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                         viewModel.sendMessage(inputText, attachedImages)
                                         inputText = ""
                                         attachedImages = emptyList()
@@ -226,41 +258,93 @@ fun ChatScreen(
                 }
             }
         ) { paddingValues ->
-            if (uiState.messages.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(paddingValues),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("💬", style = MaterialTheme.typography.displayMedium)
-                        Spacer(modifier = Modifier.padding(8.dp))
-                        Text(
-                            text = "开始与 ${uiState.selectedModel.displayName} 对话",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(paddingValues)
+            ) {
+                if (uiState.messages.isEmpty()) {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("💬", style = MaterialTheme.typography.displayMedium)
+                            Spacer(modifier = Modifier.padding(8.dp))
+                            Text(
+                                text = "开始与 ${uiState.selectedModel.displayName} 对话",
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                } else {
+                    LazyColumn(
+                        state = listState,
+                        reverseLayout = true,
+                        contentPadding = PaddingValues(16.dp),
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        items(
+                            items = uiState.messages.reversed(),
+                            key = { it.id }
+                        ) { message ->
+                            MessageBubble(
+                                message = message,
+                                onEditModelMessage = { id, text -> viewModel.editModelMessage(id, text) },
+                                onEditAndResendUserMessage = { id, text -> viewModel.editAndResendUserMessage(id, text) }
+                            )
+                        }
                     }
                 }
-            } else {
-                LazyColumn(
-                    state = listState,
-                    reverseLayout = true,
-                    contentPadding = PaddingValues(16.dp),
+
+                // Floating Scroll to Bottom button
+                AnimatedVisibility(
+                    visible = showScrollToBottom,
+                    enter = fadeIn() + slideInVertically { it / 2 },
+                    exit = fadeOut() + slideOutVertically { it / 2 },
                     modifier = Modifier
-                        .fillMaxSize()
-                        .padding(paddingValues)
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 16.dp, bottom = 12.dp)
                 ) {
-                    items(
-                        items = uiState.messages.reversed(),
-                        key = { it.id }
-                    ) { message ->
-                        MessageBubble(
-                            message = message,
-                            onEditModelMessage = { id, text -> viewModel.editModelMessage(id, text) },
-                            onEditAndResendUserMessage = { id, text -> viewModel.editAndResendUserMessage(id, text) }
-                        )
+                    Surface(
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            scope.launch { listState.animateScrollToItem(0) }
+                        },
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        shadowElevation = 6.dp,
+                        tonalElevation = 6.dp
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            if (uiState.isGenerating) {
+                                StreamingIndicator(color = MaterialTheme.colorScheme.primary)
+                                Text(
+                                    text = "新内容生成中 ↓",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Default.KeyboardArrowDown,
+                                    contentDescription = "回到底部",
+                                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Text(
+                                    text = "回到底部",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
                     }
                 }
             }

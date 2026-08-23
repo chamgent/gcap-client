@@ -134,6 +134,7 @@ fun UserMessageBubble(
     val clipboardManager = LocalClipboardManager.current
     var showEditDialog by remember { mutableStateOf(false) }
     val context = LocalContext.current
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
 
     Column(
         modifier = modifier
@@ -186,6 +187,7 @@ fun UserMessageBubble(
 
             IconButton(
                 onClick = {
+                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
                     clipboardManager.setText(AnnotatedString(message.textContent))
                     Toast.makeText(context, "已复制消息到剪贴板", Toast.LENGTH_SHORT).show()
                 },
@@ -213,7 +215,10 @@ fun UserMessageBubble(
 
             if (onEditAndResendUserMessage != null) {
                 IconButton(
-                    onClick = { onEditAndResendUserMessage(message.id, message.textContent) },
+                    onClick = {
+                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                        onEditAndResendUserMessage(message.id, message.textContent)
+                    },
                     modifier = Modifier.size(24.dp)
                 ) {
                     Icon(
@@ -254,6 +259,7 @@ fun ModelMessageView(
     var showEditDialog by remember { mutableStateOf(false) }
     var fullScreenImage by remember { mutableStateOf<MessageImage?>(null) }
     val context = LocalContext.current
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
 
     Column(
         modifier = modifier
@@ -479,6 +485,7 @@ fun ModelMessageView(
             ) {
                 IconButton(
                     onClick = {
+                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
                         clipboardManager.setText(AnnotatedString(message.textContent))
                         Toast.makeText(context, "已复制消息到剪贴板", Toast.LENGTH_SHORT).show()
                     },
@@ -506,7 +513,10 @@ fun ModelMessageView(
 
                 if (onRegenerate != null) {
                     IconButton(
-                        onClick = onRegenerate,
+                        onClick = {
+                            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                            onRegenerate()
+                        },
                         modifier = Modifier.size(24.dp)
                     ) {
                         Icon(
@@ -606,6 +616,7 @@ fun EditMessageDialog(
 ) {
     var text by remember { mutableStateOf(message.textContent) }
     val isUser = message.role == MessageRole.USER
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -641,6 +652,7 @@ fun EditMessageDialog(
             if (isUser && onResendInPlace != null) {
                 Button(
                     onClick = {
+                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                         onResendInPlace(text)
                         onDismiss()
                     },
@@ -651,6 +663,7 @@ fun EditMessageDialog(
             } else {
                 Button(
                     onClick = {
+                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
                         onSaveOnly(text)
                         onDismiss()
                     },
@@ -665,6 +678,7 @@ fun EditMessageDialog(
                 if (isUser) {
                     TextButton(
                         onClick = {
+                            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
                             onSaveOnly(text)
                             onDismiss()
                         },
