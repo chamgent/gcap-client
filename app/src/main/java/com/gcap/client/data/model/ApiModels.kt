@@ -71,7 +71,7 @@ data class GenerationConfig(
 
 @Serializable
 data class ThinkingConfig(
-    val thinkingLevel: String  // "NONE", "MINIMAL", "MEDIUM", "HIGH"
+    val thinkingLevel: String  // "MINIMAL", "LOW", "MEDIUM", "HIGH"
 )
 
 @Serializable

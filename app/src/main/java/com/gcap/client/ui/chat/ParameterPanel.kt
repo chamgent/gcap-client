@@ -137,7 +137,7 @@ fun ParameterPanel(
                 Column {
                     Text("思考级别 (Thinking Level)", style = MaterialTheme.typography.bodyMedium)
                     Spacer(modifier = Modifier.height(6.dp))
-                    val levels = listOf("NONE", "MINIMAL", "MEDIUM", "HIGH")
+                    val levels = listOf("MINIMAL", "LOW", "MEDIUM", "HIGH")
                     SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
                         levels.forEachIndexed { index, level ->
                             SegmentedButton(

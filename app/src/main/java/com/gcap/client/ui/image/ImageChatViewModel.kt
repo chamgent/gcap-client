@@ -575,9 +575,7 @@ class ImageChatViewModel @Inject constructor(
             listOf(Tool(googleSearch = GoogleSearchTool()))
         } else null
 
-        val thinkingConfig = if (state.thinkingLevel != "NONE") {
-            ThinkingConfig(thinkingLevel = state.thinkingLevel)
-        } else null
+        val thinkingConfig = ThinkingConfig(thinkingLevel = state.thinkingLevel)
 
         val aspectRatioVal = if (state.aspectRatio == "auto" || state.aspectRatio.isBlank()) null else state.aspectRatio
         val imageSizeVal = if (state.imageSize.isBlank()) null else state.imageSize

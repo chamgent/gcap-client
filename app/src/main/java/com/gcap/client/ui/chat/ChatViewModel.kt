@@ -109,7 +109,7 @@ class ChatViewModel @Inject constructor(
                 supportsGoogleSearch = false,
                 supportsGoogleMaps = false,
                 defaultMaxOutputTokens = 65535,
-                defaultThinkingLevel = "NONE"
+                defaultThinkingLevel = "MEDIUM"
             )
         }
         ModelRegistry.chatModels + customModelDefs
