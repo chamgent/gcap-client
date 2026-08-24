@@ -1,6 +1,5 @@
 package com.gcap.client.data.local
 
-import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -12,6 +11,7 @@ data class ConversationEntity(
     val title: String,
     val modelId: String,
     val modelCategory: String, // "CHAT" or "IMAGE"
+    val systemInstruction: String = "",
     val createdAt: Long,
     val updatedAt: Long
 )
@@ -39,6 +39,7 @@ data class MessageEntity(
     val imagesJson: String, // JSON serialized list of MessageImage
     val thinkingContent: String,
     val toolCallContent: String = "",
+    val modelName: String = "",
     val timestamp: Long,
     val orderIndex: Int
 )

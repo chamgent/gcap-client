@@ -149,6 +149,15 @@ class ChatViewModel @Inject constructor(
 
     fun loadConversation(conversationId: String) {
         viewModelScope.launch {
+            val conversation = repository.getConversationById(conversationId)
+            val restoredSystemInstruction = conversation?.systemInstruction ?: ""
+            val restoredModelId = conversation?.modelId
+            val restoredModel = if (restoredModelId != null) {
+                availableModels.value.find { it.id == restoredModelId }
+                    ?: ModelRegistry.getModel(restoredModelId)
+                    ?: _uiState.value.selectedModel
+            } else _uiState.value.selectedModel
+
             repository.getMessages(conversationId).first().let { entities ->
                 val loadedMessages = entities.map { entity ->
                     val images = try {
@@ -165,6 +174,9 @@ class ChatViewModel @Inject constructor(
                         images = images,
                         thinkingContent = entity.thinkingContent,
                         toolCallContent = entity.toolCallContent,
+                        modelName = entity.modelName.ifBlank {
+                            restoredModel.displayName
+                        },
                         timestamp = entity.timestamp,
                         isStreaming = false
                     )
@@ -173,6 +185,8 @@ class ChatViewModel @Inject constructor(
                     it.copy(
                         conversationId = conversationId,
                         messages = loadedMessages,
+                        selectedModel = restoredModel,
+                        systemInstruction = restoredSystemInstruction,
                         isGenerating = false,
                         error = null
                     )
@@ -192,6 +206,13 @@ class ChatViewModel @Inject constructor(
 
     fun updateSystemInstruction(instruction: String) {
         _uiState.update { it.copy(systemInstruction = instruction) }
+        viewModelScope.launch {
+            val currentId = _uiState.value.conversationId
+            val conv = repository.getConversationById(currentId)
+            if (conv != null) {
+                repository.insertConversation(conv.copy(systemInstruction = instruction, updatedAt = System.currentTimeMillis()))
+            }
+        }
     }
 
     fun updateMaxOutputTokens(tokens: Int) {
@@ -277,6 +298,7 @@ class ChatViewModel @Inject constructor(
                     title = if (currentState.messages.isEmpty()) text.take(30).ifEmpty { "对话" } else "对话",
                     modelId = currentState.selectedModel.id,
                     modelCategory = "CHAT",
+                    systemInstruction = currentState.systemInstruction,
                     createdAt = System.currentTimeMillis(),
                     updatedAt = System.currentTimeMillis()
                 )
@@ -529,6 +551,7 @@ class ChatViewModel @Inject constructor(
                 imagesJson = if (imagesForDb.isNotEmpty()) json.encodeToString(imagesForDb) else "",
                 thinkingContent = accumulatedThought,
                 toolCallContent = accumulatedToolCall,
+                modelName = currentState.selectedModel.displayName,
                 timestamp = System.currentTimeMillis(),
                 orderIndex = currentState.messages.size + 1
             )

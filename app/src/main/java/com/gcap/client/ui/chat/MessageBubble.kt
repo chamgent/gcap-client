@@ -10,6 +10,8 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.util.Base64
 import android.widget.Toast
+import androidx.core.content.FileProvider
+import java.io.File
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -133,6 +135,7 @@ fun UserMessageBubble(
 ) {
     val clipboardManager = LocalClipboardManager.current
     var showEditDialog by remember { mutableStateOf(false) }
+    var previewImage by remember { mutableStateOf<MessageImage?>(null) }
     val context = LocalContext.current
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
 
@@ -156,7 +159,10 @@ fun UserMessageBubble(
                         modifier = Modifier.padding(bottom = 8.dp)
                     ) {
                         message.images.forEach { file ->
-                            AttachmentChip(file = file)
+                            AttachmentChip(
+                                file = file,
+                                onPreviewImage = { previewImage = it }
+                            )
                         }
                     }
                 }
@@ -242,6 +248,13 @@ fun UserMessageBubble(
             onResendInPlace = if (onEditAndResendUserMessage != null) {
                 { newText -> onEditAndResendUserMessage(message.id, newText) }
             } else null
+        )
+    }
+
+    previewImage?.let { image ->
+        FullScreenImageDialog(
+            image = image,
+            onDismiss = { previewImage = null }
         )
     }
 }
@@ -445,7 +458,10 @@ fun ModelMessageView(
                             contentScale = ContentScale.Crop
                         )
                     } else {
-                        AttachmentChip(file = image)
+                        AttachmentChip(
+                            file = image,
+                            onPreviewImage = { fullScreenImage = it }
+                        )
                     }
                 }
             }
@@ -593,7 +609,10 @@ fun ModelMessageView(
 }
 
 @Composable
-fun AttachmentChip(file: MessageImage) {
+fun AttachmentChip(
+    file: MessageImage,
+    onPreviewImage: ((MessageImage) -> Unit)? = null
+) {
     val context = LocalContext.current
     val (icon, label) = when {
         file.mimeType.startsWith("image/") -> Pair(Icons.Outlined.AutoAwesome, file.name ?: "图片")
@@ -604,16 +623,10 @@ fun AttachmentChip(file: MessageImage) {
 
     AssistChip(
         onClick = {
-            file.uri?.let { uriStr ->
-                try {
-                    val intent = Intent(Intent.ACTION_VIEW).apply {
-                        setDataAndType(Uri.parse(uriStr), file.mimeType)
-                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    }
-                    context.startActivity(intent)
-                } catch (e: Exception) {
-                    Toast.makeText(context, "无法打开此文件", Toast.LENGTH_SHORT).show()
-                }
+            if (file.mimeType.startsWith("image/") && onPreviewImage != null) {
+                onPreviewImage(file)
+            } else {
+                openMediaFile(context, file)
             }
         },
         leadingIcon = {
@@ -629,6 +642,31 @@ fun AttachmentChip(file: MessageImage) {
             containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
         )
     )
+}
+
+fun openMediaFile(context: Context, file: MessageImage) {
+    try {
+        val uriStr = file.uri ?: return
+        val rawUri = Uri.parse(uriStr)
+        val contentUri = if (rawUri.scheme == "file") {
+            val localFile = File(rawUri.path ?: "")
+            FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", localFile)
+        } else {
+            rawUri
+        }
+
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(contentUri, file.mimeType)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        val chooser = Intent.createChooser(intent, "打开 ${file.name ?: "文件"}")
+        chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(chooser)
+    } catch (e: Exception) {
+        e.printStackTrace()
+        Toast.makeText(context, "无法打开此文件: ${e.message}", Toast.LENGTH_SHORT).show()
+    }
 }
 
 @Composable

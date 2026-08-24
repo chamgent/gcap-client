@@ -60,6 +60,9 @@ class GeminiRepository @Inject constructor(
     fun getConversationsByCategory(category: String): Flow<List<ConversationEntity>> =
         conversationDao.getConversationsByCategory(category)
 
+    suspend fun getConversationById(conversationId: String): ConversationEntity? =
+        conversationDao.getConversationById(conversationId)
+
     fun getMessages(conversationId: String): Flow<List<MessageEntity>> =
         conversationDao.getMessages(conversationId)
 
