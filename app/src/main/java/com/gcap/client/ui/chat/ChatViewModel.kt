@@ -136,6 +136,7 @@ class ChatViewModel @Inject constructor(
     }
 
     fun createNewConversation() {
+        stopGeneration()
         val newId = UUID.randomUUID().toString()
         _uiState.update {
             it.copy(
@@ -148,6 +149,7 @@ class ChatViewModel @Inject constructor(
     }
 
     fun loadConversation(conversationId: String) {
+        stopGeneration()
         viewModelScope.launch {
             val conversation = repository.getConversationById(conversationId)
             val restoredSystemInstruction = conversation?.systemInstruction ?: ""
