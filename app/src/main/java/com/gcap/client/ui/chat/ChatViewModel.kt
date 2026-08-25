@@ -52,7 +52,24 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 import javax.inject.Inject
+
+data class ActiveStreamState(
+    var job: Job? = null,
+    val conversationId: String,
+    val modelMessageId: String,
+    val modelName: String,
+    var accumulatedText: String = "",
+    var accumulatedThought: String = "",
+    var accumulatedToolCall: String = "",
+    var promptTokens: Int? = null,
+    var candidatesTokens: Int? = null,
+    val accumulatedImages: MutableList<MessageImage> = CopyOnWriteArrayList(),
+    @Volatile var isStreaming: Boolean = true,
+    @Volatile var error: String? = null
+)
 
 data class ChatUiState(
     val conversationId: String = UUID.randomUUID().toString(),
@@ -115,7 +132,7 @@ class ChatViewModel @Inject constructor(
         ModelRegistry.chatModels + customModelDefs
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), ModelRegistry.chatModels)
 
-    private var generationJob: Job? = null
+    private val activeStreams = ConcurrentHashMap<String, ActiveStreamState>()
 
     init {
         viewModelScope.launch {
@@ -136,12 +153,12 @@ class ChatViewModel @Inject constructor(
     }
 
     fun createNewConversation() {
-        stopGeneration()
         val newId = UUID.randomUUID().toString()
         _uiState.update {
             it.copy(
                 conversationId = newId,
                 messages = emptyList(),
+                systemInstruction = "",
                 isGenerating = false,
                 error = null
             )
@@ -149,7 +166,6 @@ class ChatViewModel @Inject constructor(
     }
 
     fun loadConversation(conversationId: String) {
-        stopGeneration()
         viewModelScope.launch {
             val conversation = repository.getConversationById(conversationId)
             val restoredSystemInstruction = conversation?.systemInstruction ?: ""
@@ -182,14 +198,37 @@ class ChatViewModel @Inject constructor(
                         timestamp = entity.timestamp,
                         isStreaming = false
                     )
+                }.toMutableList()
+
+                val activeStream = activeStreams[conversationId]
+                val isGenerating = activeStream?.isStreaming == true
+                if (activeStream != null && isGenerating) {
+                    if (loadedMessages.none { it.id == activeStream.modelMessageId }) {
+                        loadedMessages.add(
+                            ChatMessage(
+                                id = activeStream.modelMessageId,
+                                role = MessageRole.MODEL,
+                                textContent = activeStream.accumulatedText,
+                                thinkingContent = activeStream.accumulatedThought,
+                                toolCallContent = activeStream.accumulatedToolCall,
+                                promptTokens = activeStream.promptTokens,
+                                candidatesTokens = activeStream.candidatesTokens,
+                                images = activeStream.accumulatedImages.toList(),
+                                modelName = activeStream.modelName,
+                                timestamp = System.currentTimeMillis(),
+                                isStreaming = true
+                            )
+                        )
+                    }
                 }
+
                 _uiState.update {
                     it.copy(
                         conversationId = conversationId,
                         messages = loadedMessages,
                         selectedModel = restoredModel,
                         systemInstruction = restoredSystemInstruction,
-                        isGenerating = false,
+                        isGenerating = isGenerating,
                         error = null
                     )
                 }
@@ -199,6 +238,7 @@ class ChatViewModel @Inject constructor(
 
     fun deleteConversation(conversationId: String) {
         viewModelScope.launch {
+            activeStreams.remove(conversationId)?.job?.cancel()
             repository.deleteConversation(conversationId)
             if (_uiState.value.conversationId == conversationId) {
                 createNewConversation()
@@ -250,53 +290,84 @@ class ChatViewModel @Inject constructor(
     }
 
     fun stopGeneration() {
-        generationJob?.cancel()
-        _uiState.update { state ->
-            val messages = state.messages.map { msg ->
-                if (msg.isStreaming) msg.copy(isStreaming = false) else msg
+        val currentConvId = _uiState.value.conversationId
+        val activeStream = activeStreams.remove(currentConvId)
+        activeStream?.job?.cancel()
+
+        if (activeStream != null && (activeStream.accumulatedText.isNotBlank() || activeStream.accumulatedImages.isNotEmpty())) {
+            viewModelScope.launch {
+                val imagesForDb = activeStream.accumulatedImages.map { img ->
+                    val localUri = img.uri ?: (img.base64Data?.let { imageStorageManager.saveBase64Image(it, img.mimeType) })
+                    MessageImage(uri = localUri, mimeType = img.mimeType)
+                }
+                repository.insertMessage(
+                    MessageEntity(
+                        id = activeStream.modelMessageId,
+                        conversationId = currentConvId,
+                        role = "MODEL",
+                        textContent = activeStream.accumulatedText,
+                        imagesJson = if (imagesForDb.isNotEmpty()) json.encodeToString(imagesForDb) else "",
+                        thinkingContent = activeStream.accumulatedThought,
+                        toolCallContent = activeStream.accumulatedToolCall,
+                        modelName = activeStream.modelName,
+                        timestamp = System.currentTimeMillis(),
+                        orderIndex = _uiState.value.messages.size
+                    )
+                )
             }
-            state.copy(messages = messages, isGenerating = false)
+        }
+
+        _uiState.update { state ->
+            if (state.conversationId != currentConvId) state else {
+                val messages = state.messages.map { msg ->
+                    if (msg.isStreaming) msg.copy(isStreaming = false) else msg
+                }
+                state.copy(messages = messages, isGenerating = false)
+            }
         }
     }
 
     fun sendMessage(text: String, images: List<MessageImage> = emptyList()) {
         if (text.isBlank() && images.isEmpty()) return
         val currentState = _uiState.value
-        if (currentState.isGenerating) return
+        val targetConversationId = currentState.conversationId
+        if (activeStreams[targetConversationId]?.isStreaming == true) return
 
-        generationJob = viewModelScope.launch {
-            val userMessage = ChatMessage(
-                id = UUID.randomUUID().toString(),
-                role = MessageRole.USER,
-                textContent = text,
-                images = images,
-                timestamp = System.currentTimeMillis()
-            )
+        val userMessage = ChatMessage(
+            id = UUID.randomUUID().toString(),
+            role = MessageRole.USER,
+            textContent = text,
+            images = images,
+            timestamp = System.currentTimeMillis()
+        )
 
-            val modelMessageId = UUID.randomUUID().toString()
-            val initialModelMessage = ChatMessage(
-                id = modelMessageId,
-                role = MessageRole.MODEL,
-                textContent = "",
-                thinkingContent = "",
-                modelName = currentState.selectedModel.displayName,
-                timestamp = System.currentTimeMillis(),
-                isStreaming = true
-            )
+        val modelMessageId = UUID.randomUUID().toString()
+        val initialModelMessage = ChatMessage(
+            id = modelMessageId,
+            role = MessageRole.MODEL,
+            textContent = "",
+            thinkingContent = "",
+            modelName = currentState.selectedModel.displayName,
+            timestamp = System.currentTimeMillis(),
+            isStreaming = true
+        )
 
-            val updatedMessages = currentState.messages + userMessage + initialModelMessage
-            _uiState.update {
-                it.copy(
+        val updatedMessages = currentState.messages + userMessage + initialModelMessage
+        _uiState.update { state ->
+            if (state.conversationId == targetConversationId) {
+                state.copy(
                     messages = updatedMessages,
                     isGenerating = true,
                     error = null
                 )
-            }
+            } else state
+        }
 
-            // Persist conversation and user message to Room
+        // Persist conversation and user message to Room
+        viewModelScope.launch {
             repository.insertConversation(
                 ConversationEntity(
-                    id = currentState.conversationId,
+                    id = targetConversationId,
                     title = if (currentState.messages.isEmpty()) text.take(30).ifEmpty { "对话" } else "对话",
                     modelId = currentState.selectedModel.id,
                     modelCategory = "CHAT",
@@ -309,7 +380,7 @@ class ChatViewModel @Inject constructor(
             repository.insertMessage(
                 MessageEntity(
                     id = userMessage.id,
-                    conversationId = currentState.conversationId,
+                    conversationId = targetConversationId,
                     role = "USER",
                     textContent = userMessage.textContent,
                     imagesJson = if (images.isNotEmpty()) json.encodeToString(images) else "",
@@ -319,20 +390,38 @@ class ChatViewModel @Inject constructor(
                     orderIndex = currentState.messages.size
                 )
             )
+        }
 
+        val historyMessages = currentState.messages + userMessage
+        val streamState = ActiveStreamState(
+            conversationId = targetConversationId,
+            modelMessageId = modelMessageId,
+            modelName = currentState.selectedModel.displayName
+        )
+
+        val job = viewModelScope.launch {
             try {
-                executeStreaming(currentState, modelMessageId, currentState.messages + userMessage)
+                executeStreaming(currentState, streamState, historyMessages)
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                streamState.isStreaming = false
+                streamState.error = e.message ?: "请求失败"
                 _uiState.update { state ->
-                    val errorMessages = state.messages.map { msg ->
-                        if (msg.id == modelMessageId) {
-                            msg.copy(isStreaming = false, error = e.message ?: "请求失败")
-                        } else msg
-                    }
-                    state.copy(messages = errorMessages, isGenerating = false, error = e.message ?: "请求失败")
+                    if (state.conversationId == targetConversationId) {
+                        val errorMessages = state.messages.map { msg ->
+                            if (msg.id == modelMessageId) {
+                                msg.copy(isStreaming = false, error = e.message ?: "请求失败")
+                            } else msg
+                        }
+                        state.copy(messages = errorMessages, isGenerating = false, error = e.message ?: "请求失败")
+                    } else state
                 }
+            } finally {
+                activeStreams.remove(targetConversationId)
             }
         }
+        streamState.job = job
+        activeStreams[targetConversationId] = streamState
     }
 
     fun editModelMessage(messageId: String, newText: String) {
@@ -349,8 +438,11 @@ class ChatViewModel @Inject constructor(
 
     fun editAndResendUserMessage(messageId: String, newText: String) {
         val currentState = _uiState.value
+        val targetConversationId = currentState.conversationId
         val userMsgIndex = currentState.messages.indexOfFirst { it.id == messageId }
         if (userMsgIndex == -1) return
+
+        activeStreams.remove(targetConversationId)?.job?.cancel()
 
         val targetUserMsg = currentState.messages[userMsgIndex].copy(textContent = newText)
         val truncatedHistory = currentState.messages.take(userMsgIndex) + targetUserMsg
@@ -367,68 +459,86 @@ class ChatViewModel @Inject constructor(
         )
 
         val newMessages = truncatedHistory + initialModelMessage
-        _uiState.update {
-            it.copy(
-                messages = newMessages,
-                isGenerating = true,
-                error = null
-            )
+        _uiState.update { state ->
+            if (state.conversationId == targetConversationId) {
+                state.copy(
+                    messages = newMessages,
+                    isGenerating = true,
+                    error = null
+                )
+            } else state
         }
 
         viewModelScope.launch {
-            repository.deleteMessagesAfterOrder(currentState.conversationId, userMsgIndex)
+            repository.deleteMessagesAfterOrder(targetConversationId, userMsgIndex)
             repository.updateMessageText(messageId, newText)
         }
 
-        generationJob = viewModelScope.launch {
+        val streamState = ActiveStreamState(
+            conversationId = targetConversationId,
+            modelMessageId = modelMessageId,
+            modelName = currentState.selectedModel.displayName
+        )
+
+        val job = viewModelScope.launch {
             try {
-                executeStreaming(currentState, modelMessageId, truncatedHistory)
+                executeStreaming(currentState, streamState, truncatedHistory)
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                streamState.isStreaming = false
+                streamState.error = e.message ?: "请求失败"
                 _uiState.update { state ->
-                    val errorMessages = state.messages.map { msg ->
-                        if (msg.id == modelMessageId) {
-                            msg.copy(isStreaming = false, error = e.message ?: "请求失败")
-                        } else msg
-                    }
-                    state.copy(messages = errorMessages, isGenerating = false, error = e.message ?: "请求失败")
+                    if (state.conversationId == targetConversationId) {
+                        val errorMessages = state.messages.map { msg ->
+                            if (msg.id == modelMessageId) {
+                                msg.copy(isStreaming = false, error = e.message ?: "请求失败")
+                            } else msg
+                        }
+                        state.copy(messages = errorMessages, isGenerating = false, error = e.message ?: "请求失败")
+                    } else state
                 }
+            } finally {
+                activeStreams.remove(targetConversationId)
             }
         }
+        streamState.job = job
+        activeStreams[targetConversationId] = streamState
     }
 
     private suspend fun executeStreaming(
         currentState: ChatUiState,
-        modelMessageId: String,
+        streamState: ActiveStreamState,
         historyMessages: List<ChatMessage>
     ) {
-        var accumulatedText = ""
-        var accumulatedThought = ""
-        var accumulatedToolCall = ""
-        var promptTokens: Int? = null
-        var candidatesTokens: Int? = null
+        val targetConversationId = streamState.conversationId
+        val modelMessageId = streamState.modelMessageId
+
         val searchQueries = mutableListOf<String>()
         val groundingSources = mutableListOf<Pair<String, String>>()
         val functionCalls = mutableListOf<String>()
-        val accumulatedImages = mutableListOf<MessageImage>()
 
         val streamFlow: Flow<StreamResponse> = if (currentState.selectedModel.requestFormat == ModelRequestFormat.FORMAT_OPENAI) {
             val providerId = currentState.selectedModel.providerId
             val provider = if (providerId != null) repository.getProviderById(providerId) else null
             if (provider == null) {
                 _uiState.update { state ->
-                    val errorMessages = state.messages.map { msg ->
-                        if (msg.id == modelMessageId) msg.copy(isStreaming = false, error = "未找到服务商配置") else msg
-                    }
-                    state.copy(messages = errorMessages, isGenerating = false, error = "未找到服务商配置")
+                    if (state.conversationId == targetConversationId) {
+                        val errorMessages = state.messages.map { msg ->
+                            if (msg.id == modelMessageId) msg.copy(isStreaming = false, error = "未找到服务商配置") else msg
+                        }
+                        state.copy(messages = errorMessages, isGenerating = false, error = "未找到服务商配置")
+                    } else state
                 }
                 return
             }
             if (provider.apiKey.isBlank()) {
                 _uiState.update { state ->
-                    val errorMessages = state.messages.map { msg ->
-                        if (msg.id == modelMessageId) msg.copy(isStreaming = false, error = "该服务商未配置 API Key") else msg
-                    }
-                    state.copy(messages = errorMessages, isGenerating = false, error = "该服务商未配置 API Key")
+                    if (state.conversationId == targetConversationId) {
+                        val errorMessages = state.messages.map { msg ->
+                            if (msg.id == modelMessageId) msg.copy(isStreaming = false, error = "该服务商未配置 API Key") else msg
+                        }
+                        state.copy(messages = errorMessages, isGenerating = false, error = "该服务商未配置 API Key")
+                    } else state
                 }
                 return
             }
@@ -447,10 +557,12 @@ class ChatViewModel @Inject constructor(
             }
             if (apiKey.isBlank()) {
                 _uiState.update { state ->
-                    val errorMessages = state.messages.map { msg ->
-                        if (msg.id == modelMessageId) msg.copy(isStreaming = false, error = "请先在设置中输入 Google API Key") else msg
-                    }
-                    state.copy(messages = errorMessages, isGenerating = false, error = "请先在设置中输入 Google API Key")
+                    if (state.conversationId == targetConversationId) {
+                        val errorMessages = state.messages.map { msg ->
+                            if (msg.id == modelMessageId) msg.copy(isStreaming = false, error = "请先在设置中输入 Google API Key") else msg
+                        }
+                        state.copy(messages = errorMessages, isGenerating = false, error = "请先在设置中输入 Google API Key")
+                    } else state
                 }
                 return
             }
@@ -460,8 +572,8 @@ class ChatViewModel @Inject constructor(
 
         streamFlow.collect { response ->
             response.usageMetadata?.let { usage ->
-                if (usage.promptTokenCount != null) promptTokens = usage.promptTokenCount
-                if (usage.candidatesTokenCount != null) candidatesTokens = usage.candidatesTokenCount
+                if (usage.promptTokenCount != null) streamState.promptTokens = usage.promptTokenCount
+                if (usage.candidatesTokenCount != null) streamState.candidatesTokens = usage.candidatesTokenCount
             }
             val candidate = response.candidates?.firstOrNull()
             candidate?.groundingMetadata?.let { gm ->
@@ -486,17 +598,17 @@ class ChatViewModel @Inject constructor(
                 }
                 if (part.thought == true) {
                     part.text?.let { chunk ->
-                        accumulatedThought += chunk
+                        streamState.accumulatedThought += chunk
                     }
                 } else {
                     part.text?.let { chunk ->
-                        accumulatedText += chunk
+                        streamState.accumulatedText += chunk
                     }
                 }
                 part.inlineData?.let { inline ->
                     if (inline.data.isNotBlank()) {
                         val fileUri = imageStorageManager.saveBase64Image(inline.data, inline.mimeType)
-                        accumulatedImages.add(
+                        streamState.accumulatedImages.add(
                             MessageImage(
                                 base64Data = inline.data,
                                 mimeType = inline.mimeType.ifBlank { "image/png" },
@@ -507,36 +619,43 @@ class ChatViewModel @Inject constructor(
                 }
             }
 
-            accumulatedToolCall = formatToolCalls(functionCalls, searchQueries, groundingSources)
+            streamState.accumulatedToolCall = formatToolCalls(functionCalls, searchQueries, groundingSources)
 
             _uiState.update { state ->
-                val currentList = state.messages.map { msg ->
-                    if (msg.id == modelMessageId) {
-                        msg.copy(
-                            textContent = accumulatedText,
-                            thinkingContent = accumulatedThought,
-                            toolCallContent = accumulatedToolCall,
-                            promptTokens = promptTokens,
-                            candidatesTokens = candidatesTokens,
-                            images = accumulatedImages.toList()
-                        )
-                    } else msg
+                if (state.conversationId != targetConversationId) state else {
+                    val currentList = state.messages.map { msg ->
+                        if (msg.id == modelMessageId) {
+                            msg.copy(
+                                textContent = streamState.accumulatedText,
+                                thinkingContent = streamState.accumulatedThought,
+                                toolCallContent = streamState.accumulatedToolCall,
+                                promptTokens = streamState.promptTokens,
+                                candidatesTokens = streamState.candidatesTokens,
+                                images = streamState.accumulatedImages.toList(),
+                                isStreaming = true
+                            )
+                        } else msg
+                    }
+                    state.copy(messages = currentList, isGenerating = true)
                 }
-                state.copy(messages = currentList)
             }
         }
 
         // Streaming done
+        streamState.isStreaming = false
+
         _uiState.update { state ->
-            val finalMessages = state.messages.map { msg ->
-                if (msg.id == modelMessageId) {
-                    msg.copy(isStreaming = false)
-                } else msg
+            if (state.conversationId != targetConversationId) state else {
+                val finalMessages = state.messages.map { msg ->
+                    if (msg.id == modelMessageId) {
+                        msg.copy(isStreaming = false)
+                    } else msg
+                }
+                state.copy(messages = finalMessages, isGenerating = false)
             }
-            state.copy(messages = finalMessages, isGenerating = false)
         }
 
-        val imagesForDb = accumulatedImages.map { img ->
+        val imagesForDb = streamState.accumulatedImages.map { img ->
             val localUri = img.uri ?: (img.base64Data?.let { imageStorageManager.saveBase64Image(it, img.mimeType) })
             MessageImage(
                 uri = localUri,
@@ -547,21 +666,21 @@ class ChatViewModel @Inject constructor(
         repository.insertMessage(
             MessageEntity(
                 id = modelMessageId,
-                conversationId = currentState.conversationId,
+                conversationId = targetConversationId,
                 role = "MODEL",
-                textContent = accumulatedText,
+                textContent = streamState.accumulatedText,
                 imagesJson = if (imagesForDb.isNotEmpty()) json.encodeToString(imagesForDb) else "",
-                thinkingContent = accumulatedThought,
-                toolCallContent = accumulatedToolCall,
-                modelName = currentState.selectedModel.displayName,
+                thinkingContent = streamState.accumulatedThought,
+                toolCallContent = streamState.accumulatedToolCall,
+                modelName = streamState.modelName,
                 timestamp = System.currentTimeMillis(),
-                orderIndex = currentState.messages.size + 1
+                orderIndex = historyMessages.size + 1
             )
         )
 
         repository.updateConversationTitle(
-            conversationId = currentState.conversationId,
-            title = (currentState.messages.firstOrNull()?.textContent ?: historyMessages.firstOrNull()?.textContent ?: "新对话").take(30).ifEmpty { "新对话" },
+            conversationId = targetConversationId,
+            title = (historyMessages.firstOrNull { it.role == MessageRole.USER }?.textContent ?: "对话").take(30).ifEmpty { "对话" },
             updatedAt = System.currentTimeMillis()
         )
     }
