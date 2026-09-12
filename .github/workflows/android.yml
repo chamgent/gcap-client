@@ -37,9 +37,9 @@ jobs:
   # ───────────────────────────────────────────────────────────
   build:
     name: 测试并构建 APK
-    # GitHub 免费提供的 Ubuntu 虚拟机，已预装 JDK / Android SDK / Gradle 所需环境
+    # GitHub 免费提供的 Ubuntu 虚拟机，已预装 Android SDK 等环境
     runs-on: ubuntu-latest
-    # 防止卡死时白烧 6 小时（默认上限）
+    # 防止卡死时白烧时间（默认上限是 6 小时）
     timeout-minutes: 30
 
     env:
@@ -54,21 +54,21 @@ jobs:
     steps:
       # ① 把这次提交的代码下载到虚拟机上（不写这一步，机器上是空的）
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # ② 装 JDK 17：AGP 8.9.3 + Gradle 8.13 的受支持组合。
-      #    不装的话用的是 runner 默认 JDK，版本会飘。
+      #    不装的话用的是 runner 的默认 JDK，版本会飘。
+      #    cache: gradle 会把 ~/.gradle 缓存起来，第二次运行明显更快。
+      #    这里刻意不用 gradle/actions/setup-gradle@v6：它的缓存组件已经
+      #    变成闭源商业组件，需要接受 Gradle 的商业条款，没必要。
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '17'
+          cache: gradle
 
-      # ③ Gradle 官方动作：缓存 ~/.gradle，第二次运行能省几分钟
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-
-      # ④ 把 Secrets 里的 base64 keystore 还原成文件。
+      # ③ 把 Secrets 里的 base64 keystore 还原成文件。
       #    注意：secrets 上下文不能直接用在 step 的 if 里，
       #    所以先经 job 级 env 中转，这里判断 env 是否为空。
       - name: Decode release keystore
@@ -79,16 +79,16 @@ jobs:
           echo "RELEASE_KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
           echo "已解码 keystore：$RUNNER_TEMP/release.jks"
 
-      # ⑤ 质量门：单元测试。失败 → 这个 step 红 → job 红 →
+      # ④ 质量门：单元测试。失败 → 这个 step 红 → job 红 →
       #    下面的构建和上传都不会执行，所以不会产出任何 APK。
       - name: Run unit tests
         run: ./gradlew testDebugUnitTest --stacktrace
 
-      # ⑥ 出包：debug 用于日常安装，release 用你的正式 keystore 签名
+      # ⑤ 出包：debug 用于日常安装，release 用你的正式 keystore 签名
       - name: Build APKs
         run: ./gradlew assembleDebug assembleRelease --stacktrace
 
-      # ⑦ 把两个 APK 的签名指纹打到日志里。
+      # ⑥ 把两个 APK 的签名指纹打到日志里。
       #    这是"release 包真的用了正式签名"的证据，不用下载就能核对。
       - name: Show APK signatures
         run: |
@@ -99,9 +99,9 @@ jobs:
             "$APKSIGNER" verify --print-certs "$apk"
           done
 
-      # ⑧ 上传产物：跑完之后在运行页面底部可以下载
+      # ⑦ 上传产物：跑完之后在运行页面底部可以下载
       - name: Upload APKs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: gcap-client-apk
           path: app/build/outputs/apk/**/*.apk
